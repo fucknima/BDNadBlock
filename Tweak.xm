@@ -1,31 +1,50 @@
 // BDNadBlock — 广告拦截 + 移除推荐内容/游戏中心
 //
-// 数据来源：
-//   - 2026-10-15 Loon 抓包（381_1792041072312.har，632 条请求，30s）
-//   - __objc_classlist 完整解析出的 34,946 个真实类名（无壳、未加密）
+// 所有规则都来自实证，没有猜的：
+//   A. 2026-10-15 Loon 抓包（632 条请求 / 30s），逐条看响应体定性
+//   B. __objc_classlist 34952 项 -> class_ro_t.baseMethodList 解析出的真实方法名
+//      scripts/verify_selectors.py 会核对每个 selector 是否存在、返回类型是否安全。
+//      App 升级后重跑一次：python3 scripts/verify_selectors.py /path/to/netdisk_iPhone
 //
-// 网络层（NSURLProtocol + swizzle NSURLSessionConfiguration）：
-//   广告  cpc-service-square.yunxish.com / iggrowth.cn / *.yunxish.com
-//   素材  *.jomoxc.com / *.antpcdn.com / *.bcebos.com 的 /amis/ 路径
-//   首页推荐  pan.baidu.com/feed/kingkongdistrict      ← 金刚区「推荐内容」
-//   游戏中心  pan.baidu.com/act/v2/gamecenter/*        ← historyplay/gametaskinfo/recommend
-//   游戏资源  /gameCenter/ 与 /swan-game_ 路径
-//   归因  nsclick.baidu.com / tanx.com / zijieapi / volces.com
+// ---------------------------------------------------------------------------
+// 抓包中被否掉的规则（曾误判为广告，实测是功能）：
 //
-// 方法层（探针 + hook）：
-//   先 dump 真实方法名到沙盒文件，再按确认存在的 selector 下刀。
-//   防崩：跳过生命周期方法、只在广告类内匹配、IMP 全局复用、block 回调验 type encoding。
+//   pan.baidu.com/feed/kingkongdistrict
+//       不是推荐流，是首页金刚区。15 个条目全是真实功能：
+//       相册/视频/求职/小说/扫描/听记/文档/学习/音频/笔记/打印/备份/星盘/同步/全网搜
 //
-// 日志：同时写 syslog 与沙盒 Documents/BDNadBlock-dump.txt（用户可取）
+//   */amis/  (staticsns.cdn.bcebos.com 等)
+//       不是广告素材。里面是首页天气特效包 rain/snow/fog/sunny_v5.zip、
+//       音效 mp3、以及首页 banner 图。拦掉 = 首页特效和图标全没。
+//
+//   *.jomoxc.com / *.antpcdn.com / *.yingt.asia
+//       不是广告域名，是上面那批静态资源的 P2P 加速镜像
+//       （如 antpcdn.com:19001/e/s0-ant.baidu.com/staticsns/amis/...）。
+//
+//   *.cdn.bcebos.com/cmpkg/
+//       不只装游戏，还有 1_swan-core —— 小程序运行时。只能精确拦 1_swan-game_。
+// ---------------------------------------------------------------------------
+//
+// 方法层（17 个 selector，11 个类，全部经二进制核对）：
+//   只 hook「把广告显示出来」这一步，不碰 bidding/task/timeout。
+//   理由：task 管理器持有 splash 超时计时器（handleAdvertiseFetchTimeOutEvent /
+//   startAdvertiseFetchTimer），动了它可能让开屏卡死。掐显示层则最坏是「没广告」。
+//   全部返回 v(void) 或 B(BOOL)，no-op 返回 nil/NO 落在 x0，调用方不会读到垃圾。
+//
+// 防崩：
+//   - 不交换 IMP，用 method_setImplementation + 保存原 IMP 直调（交换写反 = 无限递归，
+//     上一版就是栽在这里：depth 12353 打穿 Stack Guard）
+//   - 返回结构体/浮点的方法一律不碰（no-op 只保证 x0 有效，s0/x1 是垃圾）
+//   - 跳过 init/dealloc/copy/load/setter 等生命周期方法
+//   - NSURLSessionConfiguration 的 hook 延迟到 app ready，避开 dyld 的 notifyObjCInit
+//
+// 日志：syslog + 沙盒 Documents/BDNadBlock-dump.txt（可取出）
 
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 #import <string.h>
 #import <stdarg.h>
-
-static NSSet<NSString *> *BDBlockSelectors = nil;
-static IMP BDNoopIMP;
 
 #pragma mark - 日志
 
@@ -49,18 +68,17 @@ static void BDLog(NSString *fmt, ...) {
 
     NSLog(@"%@", msg);
 
+    // 只建缓冲区和队列。**不在这里解析沙盒路径**：BDLog 会在构造器阶段
+    // （dyld 镜像初始化）就被调用，那时碰 Foundation 的目录服务是自找麻烦。
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         BDLogBuffer = [NSMutableString string];
-        BDLogPath = BDResolveLogPath();
         BDLogQueue = dispatch_queue_create("com.bdnadblock.log", DISPATCH_QUEUE_SERIAL);
     });
 
     dispatch_async(BDLogQueue, ^{
         [BDLogBuffer appendString:msg];
         [BDLogBuffer appendString:@"\n"];
-        // 启动期不落盘：构造器阶段沙盒还没完全可用，写文件会拖慢启动并可能在
-        // 早于 Foundation 初始化时触发异常。延迟到 app ready 之后再开写。
         if (BDLogFileEnabled) {
             [BDLogBuffer writeToFile:BDLogPath atomically:YES
                              encoding:NSUTF8StringEncoding error:NULL];
@@ -68,8 +86,11 @@ static void BDLog(NSString *fmt, ...) {
     });
 }
 
+// 在 app ready 之后调用：此时才解析路径并打开落盘开关。
+// 缓冲区从进程启动就在累积，所以第一次落盘会把之前的日志一起写下去。
 static void BDLogPathReport(void) {
     dispatch_async(BDLogQueue, ^{
+        BDLogPath = BDResolveLogPath();
         BDLogFileEnabled = YES;
         BDLog(@"[BDNadBlock] log file: %@", BDLogPath);
     });
@@ -77,103 +98,98 @@ static void BDLogPathReport(void) {
 
 #pragma mark - 开关
 
-static BOOL BDEnabled(void) {
-    id v = [[NSUserDefaults standardUserDefaults] objectForKey:@"BDNadBlockEnabled"];
-    return v ? [v boolValue] : YES;
-}
-static BOOL BDDumpOnly(void) {
-    id v = [[NSUserDefaults standardUserDefaults] objectForKey:@"BDNadBlockDumpOnly"];
-    return v ? [v boolValue] : NO;
-}
-static BOOL BDBlockNetwork(void) {
-    id v = [[NSUserDefaults standardUserDefaults] objectForKey:@"BDNadBlockNetwork"];
-    return v ? [v boolValue] : YES;
-}
-static BOOL BDRemoveRecommend(void) {
-    id v = [[NSUserDefaults standardUserDefaults] objectForKey:@"BDRemoveRecommend"];
-    return v ? [v boolValue] : YES;   // 默认关掉推荐内容
-}
-static BOOL BDRemoveGameCenter(void) {
-    id v = [[NSUserDefaults standardUserDefaults] objectForKey:@"BDRemoveGameCenter"];
-    return v ? [v boolValue] : YES;   // 默认关掉游戏中心
+static BOOL BDDefault(NSString *key, BOOL fallback) {
+    id v = [[NSUserDefaults standardUserDefaults] objectForKey:key];
+    return v ? [v boolValue] : fallback;
 }
 
-#pragma mark - 网络拦截规则
+static BOOL BDEnabled(void)       { return BDDefault(@"BDNadBlockEnabled", YES); }
+static BOOL BDDumpOnly(void)      { return BDDefault(@"BDNadBlockDumpOnly", NO); }
+static BOOL BDBlockNetwork(void)  { return BDDefault(@"BDNadBlockNetwork", YES); }
+static BOOL BDRemoveRecommend(void)  { return BDDefault(@"BDRemoveRecommend", YES); }
+static BOOL BDRemoveGameCenter(void) { return BDDefault(@"BDRemoveGameCenter", YES); }
 
-// 精确 host
+#pragma mark - 网络拦截规则（全部经抓包响应体证实）
+
+// 整个 host 都是广告链路
 static const char *BDHostRules[] = {
+    // 趣盟广告 SDK
     "cpc-service-square.yunxish.com",
     "cpc-service-square.iggrowth.cn",
     "logrcv.yunxish.com",
     "show-api.yunxish.com",
     "usr-api.yunxish.com",
+    "service.yunxish.com",
     "tracelog-debug.yunxish.com",
+    // 百度自有：广告开关 / 点击归因 / 营销云
     "afdconf.baidu.com",
     "nsclick.baidu.com",
+    "sofire.baidu.com",
+    "huiduapi.nuomi.com",
+    // 第三方联盟
     "ef-dongfeng.tanx.com",
     "tnc3-alisc1.zijieapi.com",
     "mssdk.volces.com",
+    // 当贝 / 酷开 广告 SDK（logu.hpplay.cn:8856 的 host 相同，一条覆盖）
     "conf.hpplay.cn",
     "vfa.hpplay.cn",
     "ssdkauth.hpplay.cn",
     "logu.hpplay.cn",
 };
 
-// host 后缀（带随机前缀的 CDN）
-static const char *BDSuffixRules[] = {
-    "jomoxc.com",
-    "antpcdn.com",
-    "yingt.asia",
-};
-
-// host + path 前缀
+// host + 路径前缀
 typedef struct { const char *host; const char *path; const char *tag; } BDPathRule;
 static const BDPathRule BDPathRules[] = {
-    {"staticsns.cdn.bcebos.com", "/amis/",        "ad-material"},
-    {"spcsz.cdn.bcebos.com",     "/amis/",        "ad-material"},
-    {"ndstatic.cdn.bcebos.com",  "/amis/",        "ad-material"},
-    {"s0-ant.baidu.com",         "/staticsns/amis/", "ad-material"},
-    // 首页金刚区「推荐内容」
-    {"pan.baidu.com",            "/feed/kingkongdistrict", "recommend-feed"},
-    // 游戏资源包
-    {"ndstatic.cdn.bcebos.com",  "/gameCenter/",  "game-center-asset"},
-    {"spcsz.cdn.bcebos.com",     "/cmpkg/",       "game-center-asset"},
+    // 首页 banner 广告。响应实测：adList[0].title="双十一上淘宝"，
+    // actionUrl=https://ulk.alimama.com/tb?...（淘宝联盟）
+    {"pan.baidu.com", "/buy/ad/",          "ad-banner"},
+    // 激励任务广告。响应实测：scene_list[].task_list[].complete_notice
+    // ="恭喜获得1次音频倍速播放机会"
+    {"pan.baidu.com", "/rest/2.0/pcs/adv", "ad-task"},
+};
+
+// 只看路径、不看 host：这批素材会走 P2P 加速镜像，
+// host 每台设备都不一样（antpcdn.com:19001 / jomoxc.com:9082 / yingt.asia:9549），
+// 拦 host 会连静态资源一起打死，所以只能按路径判。
+static const char *BDAnyPathRules[] = {
+    "/gamecenter/",    // ndstatic.cdn.bcebos.com/gameCenter/nsr-online/*.zip
+    "_swan-game_",     // spcsz.cdn.bcebos.com/cmpkg/type1/*/1_swan-game_*.zip
+    // 注意不要拦 "/cmpkg/" 或 "_swan-core_" —— 那是小程序运行时
 };
 
 static NSString *BDMatchNetwork(NSString *host, NSString *path) {
     if (!host.length || !BDBlockNetwork()) return nil;
     host = host.lowercaseString;
-    path = path.lowercaseString ?: @"";
+    NSString *lp = path.lowercaseString ?: @"";
 
     for (unsigned i = 0; i < sizeof(BDHostRules)/sizeof(BDHostRules[0]); i++)
-        if ([host isEqualToString:@(BDHostRules[i])]) return @"host";
+        if ([host isEqualToString:@(BDHostRules[i])]) return @"ad-host";
 
-    for (unsigned i = 0; i < sizeof(BDPathRules)/sizeof(BDPathRules[0]); i++) {
+    for (unsigned i = 0; i < sizeof(BDPathRules)/sizeof(BDPathRules[0]); i++)
         if ([host isEqualToString:@(BDPathRules[i].host)] &&
-            [path hasPrefix:@(BDPathRules[i].path)])
+            [lp hasPrefix:@(BDPathRules[i].path)])
             return @(BDPathRules[i].tag);
-    }
 
-    // 游戏中心接口前缀
-    if ([host isEqualToString:@"pan.baidu.com"] && [path hasPrefix:@"/act/v2/gamecenter"])
+    if ([host isEqualToString:@"pan.baidu.com"] &&
+        [lp hasPrefix:@"/act/v2/gamecenter"])
         return BDRemoveGameCenter() ? @"game-center-api" : nil;
-    // 搜索框底部推荐
-    if ([host isEqualToString:@"pan.baidu.com"] && [path hasPrefix:@"/recommend/"])
-        return BDRemoveRecommend() ? @"recommend-api" : nil;
 
-    for (unsigned i = 0; i < sizeof(BDSuffixRules)/sizeof(BDSuffixRules[0]); i++) {
-        NSString *s = @(BDSuffixRules[i]);
-        if ([host hasSuffix:s]) return @"suffix";
-    }
+    if (BDRemoveGameCenter())
+        for (unsigned i = 0; i < sizeof(BDAnyPathRules)/sizeof(BDAnyPathRules[0]); i++)
+            if ([lp containsString:@(BDAnyPathRules[i])]) return @"game-center-asset";
+
+    // 搜索框底部推荐词（实测返回 6 条 show_query）+ 记忆中心推荐卡片
+    if (BDRemoveRecommend() && [host isEqualToString:@"pan.baidu.com"] &&
+        ([lp hasPrefix:@"/recommend/"] ||
+         [lp hasPrefix:@"/aisearch/agent/memorycenter/getrecommendcards"]))
+        return @"recommend-api";
+
     return nil;
 }
 
 #pragma mark - NSURLProtocol
 
 @interface BDNadProtocol : NSURLProtocol
-@end
-
-@interface NSURLSessionConfiguration (BDNad)
 @end
 
 static NSURLSessionConfiguration *BDInjectProtocol(NSURLSessionConfiguration *c) {
@@ -185,18 +201,24 @@ static NSURLSessionConfiguration *BDInjectProtocol(NSURLSessionConfiguration *c)
     return c;
 }
 
-// 关键：method_exchangeImplementations 之后，
-//   sel(defaultSessionConfiguration)  → 我们的实现
-//   sel(bd_defaultSessionConfiguration) → 原实现
-// 所以这里必须调 bd_ 版本才拿到原实现；调 defaultSessionConfiguration 会无限递归。
-@implementation NSURLSessionConfiguration (BDNad)
-+ (instancetype)bd_defaultSessionConfiguration {
-    return BDInjectProtocol([self bd_defaultSessionConfiguration]);
+// 不交换 IMP。交换会把 SEL 指向彼此，写反一次就是无限递归
+// ——上一版正是这么崩的（depth 12353 打穿 Stack Guard）。
+// 这里保存原 IMP 后直接调用，结构上不可能递归。
+static IMP BDOrigDefaultCfg;
+static IMP BDOrigEphemeralCfg;
+
+static NSURLSessionConfiguration *BDCallConfigIMP(IMP imp, Class cls, SEL sel) {
+    // 原实现返回 +0 对象，用 unsafe_unretained 接住再交给 ARC
+    __unsafe_unretained id r = ((__unsafe_unretained id (*)(id, SEL))imp)((id)cls, sel);
+    return BDInjectProtocol((NSURLSessionConfiguration *)r);
 }
-+ (instancetype)bd_ephemeralSessionConfiguration {
-    return BDInjectProtocol([self bd_ephemeralSessionConfiguration]);
+
+static id BDDefaultCfgHooked(id self, SEL _cmd) {
+    return BDCallConfigIMP(BDOrigDefaultCfg, (Class)self, @selector(defaultSessionConfiguration));
 }
-@end
+static id BDEphemeralCfgHooked(id self, SEL _cmd) {
+    return BDCallConfigIMP(BDOrigEphemeralCfg, (Class)self, @selector(ephemeralSessionConfiguration));
+}
 
 @implementation BDNadProtocol
 
@@ -210,119 +232,113 @@ static NSURLSessionConfiguration *BDInjectProtocol(NSURLSessionConfiguration *c)
 + (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request { return request; }
 
 - (void)startLoading {
-    NSDictionary *h = @{ @"Content-Type": @"application/json", @"Content-Length": @"2" };
+    NSData *body = [@"{}" dataUsingEncoding:NSUTF8StringEncoding];
+    NSDictionary *h = @{ @"Content-Type": @"application/json",
+                         @"Content-Length": [@(body.length) stringValue] };
     NSHTTPURLResponse *r = [[NSHTTPURLResponse alloc] initWithURL:self.request.URL
                                                        statusCode:200
                                                       HTTPVersion:@"HTTP/1.1"
                                                      headerFields:h];
     [self.client URLProtocol:self didReceiveResponse:r cacheStoragePolicy:NSURLCacheStorageNotAllowed];
-    [self.client URLProtocol:self didLoadData:[@"{}" dataUsingEncoding:NSUTF8StringEncoding]];
+    [self.client URLProtocol:self didLoadData:body];
     [self.client URLProtocolDidFinishLoading:self];
 }
 
 - (void)stopLoading {}
-
-// 重定向后 host 可能变，续投时再判一次
-- (void)willPerformHTTPRedirection:(NSHTTPURLResponse *)response
-                        newRequest:(NSURLRequest *)request
-                 completionHandler:(void (^)(NSURLRequest *))completionHandler {
-    if (BDMatchNetwork(request.URL.host, request.URL.path))
-        completionHandler(nil);
-    else
-        completionHandler(request);
-}
 
 @end
 
 static void BDSetupNetwork(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        // 必须延迟：崩溃栈显示 Foundation 在 notifyObjCInit 阶段就会调用
-        // ephemeralSessionConfiguration，此时太早介入会撞上未初始化的系统状态。
-        // 1.5s 后 app 已完成启动，Foundation/URL Loading System 都就绪。
+        // 延迟到 app ready：崩溃栈显示 Foundation 在 notifyObjCInit 阶段
+        // 就会调用 ephemeralSessionConfiguration，那时介入会撞上未初始化的状态。
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
             Class c = [NSURLSessionConfiguration class];
-            struct { SEL orig, rep; } pairs[] = {
-                {@selector(defaultSessionConfiguration),  @selector(bd_defaultSessionConfiguration)},
-                {@selector(ephemeralSessionConfiguration), @selector(bd_ephemeralSessionConfiguration)},
+            struct { SEL sel; IMP *slot; IMP hook; const char *name; } items[] = {
+                {@selector(defaultSessionConfiguration),   &BDOrigDefaultCfg,
+                 (IMP)BDDefaultCfgHooked,   "defaultSessionConfiguration"},
+                {@selector(ephemeralSessionConfiguration), &BDOrigEphemeralCfg,
+                 (IMP)BDEphemeralCfgHooked, "ephemeralSessionConfiguration"},
             };
-            BOOL ok = YES;
-            for (unsigned i = 0; i < sizeof(pairs)/sizeof(pairs[0]); i++) {
-                Method om = class_getClassMethod(c, pairs[i].orig);
-                Method rm = class_getClassMethod(c, pairs[i].rep);
-                if (om && rm) {
-                    method_exchangeImplementations(om, rm);
-                } else {
-                    ok = NO;
-                    BDLog(@"[BDNadBlock] swizzle pair %d missing (orig=%p rep=%p)",
-                          (int)i, om, rm);
+            for (unsigned i = 0; i < sizeof(items)/sizeof(items[0]); i++) {
+                Method m = class_getClassMethod(c, items[i].sel);
+                if (!m) {
+                    BDLog(@"[BDNadBlock] +[NSURLSessionConfiguration %s] not found, skipped",
+                          items[i].name);
+                    continue;
                 }
+                // 先存原 IMP 再换，避免换完到存完之间被别的线程调到
+                *items[i].slot = method_getImplementation(m);
+                method_setImplementation(m, items[i].hook);
+                BDLog(@"[BDNadBlock] hooked +[NSURLSessionConfiguration %s]", items[i].name);
             }
-            if (!ok) {
-                BDLog(@"[BDNadBlock] swizzle incomplete, network layer disabled");
-                return;
-            }
+
             [NSURLProtocol registerClass:[BDNadProtocol class]];
 
-            // 自检：在后台线程调一次，确认交换后没有递归。
-            // 若写错会在这里栈溢出崩掉，但崩的是这条临时线程，不影响主线程。
+            // 自检：确认两个工厂都挂上了协议。
+            // 说明：这不是崩溃保护 —— 栈溢出杀的是整个进程而不是这条线程，
+            // @try 也抓不住信号。它只用来验证 hook 生效。
             dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-                @try {
-                    NSURLSessionConfiguration *c = [NSURLSessionConfiguration defaultSessionConfiguration];
-                    NSURLSessionConfiguration *e = [NSURLSessionConfiguration ephemeralSessionConfiguration];
-                    BOOL hasDefault = [c.protocolClasses containsObject:[BDNadProtocol class]];
-                    BOOL hasEph = [e.protocolClasses containsObject:[BDNadProtocol class]];
-                    BDLog(@"[BDNadBlock] selftest: default=%d ephemeral=%d (want 1/1)",
-                          hasDefault, hasEph);
-                } @catch (NSException *ex) {
-                    BDLog(@"[BDNadBlock] selftest threw: %@", ex.reason);
-                }
+                NSURLSessionConfiguration *d = [NSURLSessionConfiguration defaultSessionConfiguration];
+                NSURLSessionConfiguration *e = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+                BDLog(@"[BDNadBlock] selftest: default=%d ephemeral=%d (want 1/1)",
+                      [d.protocolClasses containsObject:[BDNadProtocol class]],
+                      [e.protocolClasses containsObject:[BDNadProtocol class]]);
             });
 
-            BDLog(@"[BDNadBlock] network layer on (hosts=%zu paths=%zu suffixes=%zu)",
+            BDLog(@"[BDNadBlock] network layer on (hosts=%zu paths=%zu anypath=%zu)",
                   sizeof(BDHostRules)/sizeof(BDHostRules[0]),
                   sizeof(BDPathRules)/sizeof(BDPathRules[0]),
-                  sizeof(BDSuffixRules)/sizeof(BDSuffixRules[0]));
+                  sizeof(BDAnyPathRules)/sizeof(BDAnyPathRules[0]));
         });
     });
 }
 
-#pragma mark - 方法 hook（探针 + 下刀）
+#pragma mark - 方法 hook
 
-static NSArray<NSString *> *BDAdClasses(void) {
-    return @[
-        // 开屏
-        @"BDNCSplashAdvertiseWindow", @"BDNCSplashAdvertisePresenter",
-        @"BDNCSplashAdvertiseViewController", @"BDNCSplashBiddingTaskManager",
-        @"BDNCSplashBiddingEngine", @"BDNCSplashBiddingMainEngine",
-        @"BDNCSplashAdLoadStrategy", @"BDNCSplashAdvertiseMonitor",
-        @"BDNCBUAdsSplashAD", @"BDNCAPISplashAdHandler", @"BDNCBrandSplashAd",
-        // 插屏
-        @"BDNCInterstitialAdHandlerProtocol",
+// 类 -> 要掐掉的 selector。
+// 全部来自 class_ro_t.baseMethodList 的实测结果，且返回类型已核对为 v / B。
+static NSDictionary<NSString *, NSArray<NSString *> *> *BDHookMap(void) {
+    return @{
+        // 开屏：百度自研
+        @"BDNCSplashAdvertiseWindow": @[
+            @"showSplashWithActivityModel:",
+            @"showSplashWithImageURL:protocol:showAdWarn:",
+        ],
+        @"BDNCSplashAdvertiseViewController": @[
+            @"addSplashAdvertiseWithAdvertiseModel:",
+            @"addSplashWithActivityModel:",
+            @"addSplashWithImageURL:protocol:showAdWarn:",
+            @"showDetailSplashAdvertise",
+        ],
+        // 开屏：穿山甲 / 联盟
+        @"BDNCBUAdsSplashAD": @[@"showAdWithViewController:"],
+        @"BDNCBrandSplashAd": @[@"showSplashViewInRootViewController:"],
         // 激励视频
-        @"BDNCBuAdsRewardVideoAD", @"BDNCRewardVideoAdBaseTask",
-        @"BDNCRewardVideoAdTaskModel", @"BDNCRewardVideoAdOperation",
-        // Banner / 原生
-        @"BDPanPersonalBannerAd", @"BDPanFeedOpBannerAd",
-        @"BDNCNativeAdBaseTask", @"BDNCNativeAdTaskModel",
-        // TopOn 聚合
-        @"ABUSplashAd", @"ABUSplashAdLoader", @"ABUInterstitialAd",
-        @"ABUInterstitialProAd", @"ABURewardedVideoAd", @"ABUBannerAd",
-        // 游戏中心（第二阶段收紧 selector，先 dump）
-        @"BDPanGameCenterView", @"BDPanOperationGameCenterView",
-        @"BDPanOperationGameListView", @"BDPanMyGamesView",
-        @"BDPanRecommendGamesView",
-    ];
+        @"BDNCBuAdsRewardVideoAD": @[@"showAd:"],
+        @"BDNCRewardVideoAdBaseTask": @[@"showAdvertise"],
+        // 原生 / 信息流
+        @"BDNCNativeAdBaseTask": @[@"handleShow:"],
+        // TopOn 聚合层（返回 BOOL，no-op 返回 NO = 未展示，调用方本就有失败分支）
+        @"ABUSplashAd": @[@"showInWindow:", @"showInWindowWithBlock:"],
+        @"ABUInterstitialAd": @[@"showAdFromRootViewController:"],
+        @"ABUInterstitialProAd": @[@"showAdFromRootViewController:extraInfos:"],
+        @"ABURewardedVideoAd": @[
+            @"showAdFromRootViewController:",
+            @"showAdFromRootViewController:extraInfos:",
+            @"showAdFromRootViewController:extroInfos:",
+        ],
+    };
 }
 
 static BOOL BDIsProtectedSelector(NSString *sel) {
     static NSArray *protect = nil;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        protect = @[@"init", @"dealloc", @"new", @"copy", @"copyWithZone:",
-                    @"retain", @"release", @"autorelease",
-                    @"load", @"initialize", @"setDelegate:",
+        protect = @[@"init", @"dealloc", @"new", @"copy", @"mutableCopy",
+                    @"retain", @"release", @"autorelease", @"load", @"initialize",
                     @"description", @"debugDescription", @"hash", @"isEqual:"];
     });
     for (NSString *p in protect)
@@ -330,7 +346,30 @@ static BOOL BDIsProtectedSelector(NSString *sel) {
     return NO;
 }
 
-static id (^BDNoopBlock)(id, SEL) = ^id(id self_, SEL _cmd) { return nil; };
+// no-op 实现只保证 x0 有效（返回 nil / NO / 0）。
+// 返回结构体、浮点、复数的方法调用方会去读 s0/x1/v0，那是垃圾 —— 一律不碰。
+static BOOL BDReturnTypeIsHookSafe(char t) {
+    switch (t) {
+        case 'v': case '@': case '#': case ':':
+        case 'B': case 'c': case 'C': case 's': case 'S':
+        case 'i': case 'I': case 'l': case 'L': case 'q': case 'Q':
+        case '^': case '*':
+            return YES;
+        default:
+            return NO;   // { ( [ f d D ? b 等
+    }
+}
+
+static char BDReturnTypeChar(Method m) {
+    char buf[32] = {0};
+    method_getReturnType(m, buf, sizeof(buf));
+    return buf[0];
+}
+
+// imp_implementationWithBlock 的 block 第一个参数是 self，**没有 _cmd**。
+// 复用同一个 IMP：每次调用都会生成一个新 trampoline 且永不释放。
+static id (^BDNoopBlock)(id) = ^id(id self_) { return nil; };
+static IMP BDNoopIMP;
 
 static void BDDumpClass(Class cls) {
     unsigned n = 0;
@@ -345,7 +384,7 @@ static void BDDumpClass(Class cls) {
     free(ms);
 }
 
-static void BDWalkMethods(Class cls, NSString *clsName) {
+static void BDWalkMethods(Class cls, NSString *clsName, NSArray *wanted) {
     unsigned n = 0;
     Method *ms = class_copyMethodList(cls, &n);
     if (!ms) return;
@@ -353,51 +392,47 @@ static void BDWalkMethods(Class cls, NSString *clsName) {
         SEL sel = method_getName(ms[i]);
         if (!sel) continue;
         NSString *s = NSStringFromSelector(sel);
-        if (BDIsProtectedSelector(s)) continue;
-        if (![BDBlockSelectors containsObject:s]) continue;
+        if (![wanted containsObject:s]) continue;
+        if (BDIsProtectedSelector(s)) {
+            BDLog(@"[BDNadBlock] skip -[%@ %@] (protected)", clsName, s);
+            continue;
+        }
+        char rt = BDReturnTypeChar(ms[i]);
+        if (!BDReturnTypeIsHookSafe(rt)) {
+            BDLog(@"[BDNadBlock] skip -[%@ %@] (returns '%c', not register-safe)",
+                  clsName, s, rt);
+            continue;
+        }
         if (!BDNoopIMP) BDNoopIMP = imp_implementationWithBlock(BDNoopBlock);
         method_setImplementation(ms[i], BDNoopIMP);
-        BDLog(@"[BDNadBlock] hooked -[%@ %@]", clsName, s);
+        BDLog(@"[BDNadBlock] hooked -[%@ %@] (returns '%c')", clsName, s, rt);
     }
     free(ms);
 }
 
 static void BDBoot(void) {
     BDLogPathReport();
-    NSArray *classes = BDAdClasses();
-    unsigned dumped = 0;
+    NSDictionary *map = BDHookMap();
+    unsigned dumped = 0, missing = 0;
 
-    for (NSString *n in classes) {
+    for (NSString *n in map) {
         Class c = objc_getClass(n.UTF8String);
-        if (!c) { BDLog(@"[BDNadBlock] class missing: %@", n); continue; }
+        if (!c) { BDLog(@"[BDNadBlock] class missing: %@", n); missing++; continue; }
         BDDumpClass(c);
         dumped++;
     }
-    BDLog(@"[BDNadBlock] dumped %u/%lu classes", dumped, (unsigned long)classes.count);
+    BDLog(@"[BDNadBlock] dumped %u classes, %u missing", dumped, missing);
 
     if (BDDumpOnly() || !BDEnabled()) {
         BDLog(@"[BDNadBlock] dump-only, no method hooks applied");
         return;
     }
 
-    // 刻意不含裸 show/play —— 太宽泛；dump 后再按真实名字补
-    BDBlockSelectors = [NSSet setWithArray:@[
-        @"showSplashAd", @"showSplashAd:", @"showSplashAdWithCompletion:",
-        @"showSplashCard", @"startShow",
-        @"presentSplashAd", @"displaySplashAd",
-        @"showPrologueAd", @"showPrologueAd:",
-        @"showInterstitialAd", @"showInterstitial", @"presentAd",
-        @"showRewardVideoAd", @"showRewardVideoAd:", @"startPlay",
-        @"showRewardAd",
-        @"loadAndShow", @"showBannerAd", @"showNativeAd",
-        @"showWithCompletion:", @"showWithCompletion",
-    ]];
-
     unsigned walked = 0;
-    for (NSString *n in classes) {
+    for (NSString *n in map) {
         Class c = objc_getClass(n.UTF8String);
         if (!c) continue;
-        BDWalkMethods(c, n);
+        BDWalkMethods(c, n, map[n]);
         walked++;
     }
     BDLog(@"[BDNadBlock] method hooks done, walked %u classes", walked);
