@@ -11,22 +11,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Theos
+      # 不用 install-theos 脚本：它会打 api.github.com，CI 上容易被限流返回 exit 8
+      - name: Install Theos (manual clone, no API calls)
         run: |
-          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+          export THEOS="$HOME/theos"
+          git clone --depth 1 --recurse-submodules --shallow-submodules \
+            https://github.com/theos/theos.git "$THEOS"
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+          ls "$THEOS/makefiles/common.mk"
 
       - name: Build tweak
         run: |
-          export THEOS="$HOME/theos"
-          make clean && make package FINALPACKAGE=1
+          make clean
+          make package FINALPACKAGE=1 THEOS="$THEOS" 2>&1 | tail -40
 
       - name: Upload dylib
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: BDNadBlock.dylib
-          path: .theos/obj/BDNadBlock.dylib
+          path: |
+            .theos/obj/BDNadBlock.dylib
+            .theos/obj/arm64/BDNadBlock.dylib
 
       - name: Upload deb
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: BDNadBlock.deb
