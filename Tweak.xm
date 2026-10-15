@@ -16,6 +16,11 @@
 #import <objc/runtime.h>
 #import <string.h>
 
+// 待 hook 的 selector 名单，BDBoot 里填充
+static NSSet<NSString *> *BDBlockSelectors = nil;
+// 复用的短路 IMP，只建一次
+static IMP BDNoopIMP;
+
 #pragma mark - 配置
 
 static BOOL BDEnabled(void) {
@@ -94,7 +99,6 @@ static BOOL BDIsProtectedSelector(NSString *sel) {
 static id (^BDNoopBlock)(id, SEL) = ^id(id self_, SEL _cmd) {
     return nil;
 };
-static IMP BDNoopIMP;   // 在 BDBoot 首次使用时初始化一次
 
 #pragma mark - 探针：导出真实方法
 
@@ -151,8 +155,6 @@ static void BDWalkBlockCallback(Class cls, NSString *clsName) {
 }
 
 #pragma mark - 启动
-
-static NSSet<NSString *> *BDBlockSelectors = nil;
 
 static void BDBoot(void) {
     unsigned dumped = 0, found = 0;
