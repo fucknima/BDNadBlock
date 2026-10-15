@@ -16,14 +16,37 @@
 `objc_getClass("BDNCSplashAdvertiseWindow")` 这类直接取类可能取不到。
 运行时遍历在壳没清空 `__objc_classlist` 的前提下才有效。
 
+## 下载
+
+Actions → Build → Artifacts，下载 `BDNadBlock.dylib`：
+
+```
+https://github.com/fucknima/BDNadBlock/actions
+```
+
+Artifact 内含三个文件：
+
+| 文件 | 架构 | 用途 |
+|---|---|---|
+| `BDNadBlock.dylib` | FAT (arm64 + arm64e) | **用这个**，通用 |
+| `BDNadBlock-arm64.dylib` | arm64 | A12 及以后 |
+| `BDNadBlock-arm64e.dylib` | arm64e (PAC) | A12 及以后带 PAC |
+
+验证过的产物信息：`Mach-O universal binary, 2 architectures`，依赖
+`libobjc.A.dylib` / `UIKit` / `Foundation`，已 ldid 签名。
+
 ## 安装
 
 ```bash
-# 越狱设备：把 dylib 放到
-/var/jb/Library/MobileSubstrate/DynamicLibraries/BDNadBlock.dylib
+# 越狱设备（rootless）
+scp BDNadBlock.dylib <device>:/var/jb/Library/MobileSubstrate/DynamicLibraries/
+ssh <device> chmod 755 /var/jb/Library/MobileSubstrate/DynamicLibraries/BDNadBlock.dylib
+ssh <device> killall -9 SpringBoard
 
-# 侧载 IPA：用 ElleKit / Substrate 注入，或用 AppSync 配合该 dylib
+# 侧载 IPA：用 ElleKit / Substrate 注入，或 AppSync 装 dylib
 ```
+
+装完重启网盘 App 生效。
 
 ## 怎么确认有没有生效
 
@@ -49,5 +72,12 @@ Actions 自动编译，产物在 Artifacts 里。或者本地：
 
 ```bash
 export THEOS=~/theos
-make package FINALPACKAGE=1
+make            # 只出 dylib 到 .theos/obj/debug/
 ```
+
+CI 踩过的坑（已修，供参考）：
+
+- `install-theos` 脚本会打 `api.github.com`，Actions 上被限流返回 exit 8 → 改为直接 clone
+- 浅克隆不带 ldid，签名步骤 `ldid: command not found` → CI 里 `brew install ldid`
+- 管道后 `make` 失败会被吞掉 → 加 `set -o pipefail`，否则绿灯假成功
+- 默认输出在 `.theos/obj/debug/`，且是 FAT 合并产物，不是 `.theos/obj/arm64/`
