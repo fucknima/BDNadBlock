@@ -37,21 +37,42 @@ jobs:
           echo "--- artifacts ---"
           find .theos/obj -name '*.dylib' -o -name '*.deb' | head -20
 
+      - name: Collect artifacts to a flat dir
+        if: always()
+        run: |
+          set -e
+          mkdir -p dist
+          # make 不带 FINALPACKAGE 时输出在 .theos/obj/debug/，FAT 合并产物优先
+          if [ -f .theos/obj/debug/BDNadBlock.dylib ]; then
+            cp .theos/obj/debug/BDNadBlock.dylib dist/
+          fi
+          for f in .theos/obj/debug/*/BDNadBlock.dylib .theos/obj/*/BDNadBlock.dylib; do
+            [ -f "$f" ] || continue
+            arch=$(basename "$(dirname "$f")")
+            [ "$(basename "$f")" = "BDNadBlock.dylib" ] && [ "$(basename "$(dirname "$f")")" = "debug" ] && continue
+            cp "$f" "dist/BDNadBlock-$arch.dylib"
+          done
+          cp packages/*.deb dist/ 2>/dev/null || true
+          echo "--- dist ---"
+          ls -la dist/
+          file dist/*.dylib 2>/dev/null || true
+
       - name: Upload dylib
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: BDNadBlock.dylib
-          path: |
-            .theos/obj/BDNadBlock.dylib
-            .theos/obj/arm64/BDNadBlock.dylib
+          path: dist/*.dylib
+          if-no-files-found: error
 
       - name: Upload deb
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: BDNadBlock.deb
-          path: |
-            packages/*.deb
-            .theos/_/packages/*.deb
+          path: dist/*.deb
           if-no-files-found: ignore
+
+      - name: Upload deb (if packaged)
+        if: always()
+        run: echo "deb packaging not run in this workflow"
