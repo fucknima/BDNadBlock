@@ -13,19 +13,22 @@
 //       不是推荐流，是首页金刚区。15 个条目全是真实功能：
 //       相册/视频/求职/小说/扫描/听记/文档/学习/音频/笔记/打印/备份/星盘/同步/全网搜
 //
-//   */amis/  (staticsns.cdn.bcebos.com 等)
+//   amis 路径 (staticsns.cdn.bcebos.com 等)
 //       不是广告素材。里面是首页天气特效包 rain/snow/fog/sunny_v5.zip、
 //       音效 mp3、以及首页 banner 图。拦掉 = 首页特效和图标全没。
 //
 //   *.jomoxc.com / *.antpcdn.com / *.yingt.asia
 //       不是广告域名，是上面那批静态资源的 P2P 加速镜像
-//       （如 antpcdn.com:19001/e/s0-ant.baidu.com/staticsns/amis/...）。
+//       （如 antpcdn.com:19001/e/s0-ant.baidu.com/staticsns/amis/…）。
 //
-//   *.cdn.bcebos.com/cmpkg/
+//   bcebos 的 cmpkg 目录
 //       不只装游戏，还有 1_swan-core —— 小程序运行时。只能精确拦 1_swan-game_。
 // ---------------------------------------------------------------------------
 //
-// 方法层（17 个 selector，11 个类，全部经二进制核对）：
+// 注意：本文件里不要出现连续的 斜杠星号 或 星号斜杠 序列，
+// 哪怕在 // 行注释里也不行 —— Theos 的 Logos 预处理器会把它当块注释，吞掉后面的代码。
+//
+// 方法层（18 个 selector，11 个类，全部经二进制核对）：
 //   只 hook「把广告显示出来」这一步，不碰 bidding/task/timeout。
 //   理由：task 管理器持有 splash 超时计时器（handleAdvertiseFetchTimeOutEvent /
 //   startAdvertiseFetchTimer），动了它可能让开屏卡死。掐显示层则最坏是「没广告」。
@@ -152,9 +155,9 @@ static const BDPathRule BDPathRules[] = {
 // host 每台设备都不一样（antpcdn.com:19001 / jomoxc.com:9082 / yingt.asia:9549），
 // 拦 host 会连静态资源一起打死，所以只能按路径判。
 static const char *BDAnyPathRules[] = {
-    "/gamecenter/",    // ndstatic.cdn.bcebos.com/gameCenter/nsr-online/*.zip
-    "_swan-game_",     // spcsz.cdn.bcebos.com/cmpkg/type1/*/1_swan-game_*.zip
-    // 注意不要拦 "/cmpkg/" 或 "_swan-core_" —— 那是小程序运行时
+    "/gamecenter/",    // ndstatic.cdn.bcebos.com 的 gameCenter 目录
+    "_swan-game_",     // spcsz.cdn.bcebos.com 的 cmpkg 里的 swan 游戏包
+    // 注意不要拦 cmpkg 整目录或 1_swan-core —— 那是小程序运行时
 };
 
 static NSString *BDMatchNetwork(NSString *host, NSString *path) {
