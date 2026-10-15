@@ -14,8 +14,6 @@
 #import <dlfcn.h>
 #import <string.h>
 
-static BOOL BDEnabled = YES;
-
 // ---------- 匹配规则 ----------
 
 // 类名前缀/片段：命中即认为该类与广告有关
