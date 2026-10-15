@@ -1,0 +1,8 @@
+Package: com.fucknima.bdnadblock
+Name: BDNadBlock
+Version: 1.0.0
+Architecture: iphoneos-arm64
+Description: Block ads in Baidu Netdisk (com.baidu.netdisk). Runtime-hooks ObjC ad classes.
+Maintainer: fucknima <fucknima@users.noreply.github.com>
+Author: fucknima
+Depends: mobilesubstrate
