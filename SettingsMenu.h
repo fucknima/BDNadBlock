@@ -20,26 +20,31 @@
 #import <UIKit/UIKit.h>
 #import "Preferences.h"
 
+// 审计区域：以下未标注的指针一律按 nonnull 理解；
+// 真正可空的那几个（logURL 入参、分享行的 cell、规格查询返回、footer 文案、
+// 入口的 host/logURL）显式标 _Nullable，与实现保持一致。
+NS_ASSUME_NONNULL_BEGIN
+
 #pragma mark - 菜单
 
 @interface BDNadBlockSettingsViewController : UITableViewController
 // 诊断日志文件（主会话传 Documents/BDNadBlock-dump.txt）。
-// 只读分享：不上传、不复制整份文件、不删除原日志。
+// 只读分享：不上传、不复制整份文件、不删除原日志。无日志时菜单本身照常可用。
 @property (nonatomic, copy, nullable) NSURL *logURL;
-- (instancetype)initWithLogURL:(NSURL *)logURL;
+- (instancetype)initWithLogURL:(NSURL * _Nullable)logURL;
 @end
 
 @interface BDNadBlockSettingsViewController ()
 - (void)bdSwitchChanged:(UISwitch *)sender;
 - (void)bdDone;
-- (void)bdShareLogFromCell:(UITableViewCell *)cell;
+- (void)bdShareLogFromCell:(UITableViewCell * _Nullable)cell;
 - (NSUInteger)bdSwitchRowCountInGroup:(BDNadPrefsGroup)group;
-- (const BDNadPrefsSpec *)bdSpecAtRow:(NSInteger)row inGroup:(BDNadPrefsGroup)group;
+- (const BDNadPrefsSpec * _Nullable)bdSpecAtRow:(NSInteger)row inGroup:(BDNadPrefsGroup)group;
 @end
 
 @implementation BDNadBlockSettingsViewController
 
-- (instancetype)initWithLogURL:(NSURL *)logURL {
+- (instancetype)initWithLogURL:(NSURL * _Nullable)logURL {
     self = [super initWithStyle:UITableViewStyleInsetGrouped];
     if (self) {
         _logURL = [logURL copy];
@@ -62,7 +67,7 @@
     return n;
 }
 
-- (const BDNadPrefsSpec *)bdSpecAtRow:(NSInteger)row inGroup:(BDNadPrefsGroup)group {
+- (const BDNadPrefsSpec * _Nullable)bdSpecAtRow:(NSInteger)row inGroup:(BDNadPrefsGroup)group {
     if (row < 0) return NULL;
     NSUInteger seen = 0;
     for (NSUInteger i = 0; i < BDNadPrefsSpecCount; i++) {
@@ -86,7 +91,7 @@
     return BDNadPrefsGroupTitle((BDNadPrefsGroup)section);
 }
 
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+- (NSString * _Nullable)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     if (section != (NSInteger)BDNadPrefsGroupMaster) return nil;
     NSString *note = @"保存后请彻底退出后台并重开百度网盘生效，不会自动退出；当前页面不热更新。";
@@ -161,7 +166,7 @@
     [self bdShareLogFromCell:[tableView cellForRowAtIndexPath:indexPath]];
 }
 
-- (void)bdShareLogFromCell:(UITableViewCell *)cell {
+- (void)bdShareLogFromCell:(UITableViewCell * _Nullable)cell {
     if (self.presentedViewController) return;   // 已经弹出分享/提示面板：不重复弹
     NSString *path = self.logURL.path;
     NSFileManager *fm = [NSFileManager defaultManager];
@@ -197,7 +202,7 @@
 
 #pragma mark - 入口
 
-static inline void BDPresentPurificationSettings(UIViewController *host, NSURL *logURL) {
+static inline void BDPresentPurificationSettings(UIViewController * _Nullable host, NSURL * _Nullable logURL) {
     if (!host || ![NSThread isMainThread]) return;   // 只从主线程的 UIKit 按钮调用
 
     // host 已经在展示东西（本菜单或别的模态）：不 push、不 present、不 dismiss 别的模态，
@@ -225,5 +230,7 @@ static inline void BDPresentPurificationSettings(UIViewController *host, NSURL *
     UINavigationController *wrap = [[UINavigationController alloc] initWithRootViewController:vc];
     [host presentViewController:wrap animated:YES completion:nil];
 }
+
+NS_ASSUME_NONNULL_END
 
 #endif
