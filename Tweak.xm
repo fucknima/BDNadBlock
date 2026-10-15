@@ -71,9 +71,10 @@ static BOOL BDIsAdSelector(const char *sel) {
 // ---------- 短路实现 ----------
 
 // 返回值走 arm64 的 x0，返回 nil 对任意返回类型都成立
-static id BDNoopBlock(id self_, SEL _cmd) {
+// 必须是 block 字面量，ARC 才允许 imp_implementationWithBlock 转换
+static id (^BDNoopBlock)(id, SEL) = ^id(id self_, SEL _cmd) {
     return nil;
-}
+};
 
 // ---------- 核心：遍历 runtime 并 hook ----------
 
@@ -88,7 +89,7 @@ static void BDHookAllAdClasses(void) {
     Class *classes = (Class *)malloc(sizeof(Class) * count);
     count = objc_getClassList(classes, count);
 
-    IMP BDTrampoline = imp_implementationWithBlock((id (^)(id, SEL))BDNoopBlock);
+    IMP BDTrampoline = imp_implementationWithBlock(BDNoopBlock);
 
     for (int i = 0; i < count; i++) {
         Class cls = classes[i];
