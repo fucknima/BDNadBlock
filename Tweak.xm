@@ -211,8 +211,9 @@ static IMP BDOrigDefaultCfg;
 static IMP BDOrigEphemeralCfg;
 
 static NSURLSessionConfiguration *BDCallConfigIMP(IMP imp, Class cls, SEL sel) {
-    // 原实现返回 +0 对象，用 unsafe_unretained 接住再交给 ARC
-    __unsafe_unretained id r = ((__unsafe_unretained id (*)(id, SEL))imp)((id)cls, sel);
+    // 原实现返回 +0（autorelease）对象。经函数指针调用的默认约定就是不持有，
+    // ARC 会在赋值时自动 retain —— 不需要（也不允许）手写生命周期限定符。
+    id r = ((id (*)(id, SEL))imp)((id)cls, sel);
     return BDInjectProtocol((NSURLSessionConfiguration *)r);
 }
 
