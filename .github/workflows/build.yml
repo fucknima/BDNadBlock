@@ -12,19 +12,30 @@ jobs:
       - uses: actions/checkout@v4
 
       # 不用 install-theos 脚本：它会打 api.github.com，CI 上容易被限流返回 exit 8
-      - name: Install Theos (manual clone, no API calls)
+      - name: Install Theos + deps
         run: |
+          set -e
           export THEOS="$HOME/theos"
           git clone --depth 1 --recurse-submodules --shallow-submodules \
             https://github.com/theos/theos.git "$THEOS"
           echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+          # install-theos 会调 GitHub API，这里手工补它做的事：ldid + fakeroot
+          if ! command -v ldid >/dev/null 2>&1; then
+            brew install ldid
+          fi
+          if ! command -v fakeroot >/dev/null 2>&1; then
+            brew install fakeroot
+          fi
           ls "$THEOS/makefiles/common.mk"
+          ldid 2>&1 | head -1 || true
 
-      - name: Build tweak
+      - name: Build dylib only (skip deb packaging)
         run: |
           set -o pipefail
           make clean
-          make package FINALPACKAGE=1 THEOS="$THEOS" 2>&1 | tee build.log | tail -40
+          make THEOS="$THEOS" 2>&1 | tee build.log | tail -40
+          echo "--- artifacts ---"
+          find .theos/obj -name '*.dylib' -o -name '*.deb' | head -20
 
       - name: Upload dylib
         if: always()
@@ -40,4 +51,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: BDNadBlock.deb
-          path: packages/*.deb
+          path: |
+            packages/*.deb
+            .theos/_/packages/*.deb
+          if-no-files-found: ignore
