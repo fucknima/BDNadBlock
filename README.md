@@ -1,83 +1,80 @@
 # BDNadBlock
 
-百度网盘 (com.baidu.netdisk) 广告拦截 tweak，针对 13.32.2 分析编写。
+百度网盘 (com.baidu.netdisk) 广告拦截 tweak —— **网络层**版本。
 
-## 它做什么
+## 原理
 
-运行时遍历 ObjC runtime，匹配到广告相关类后短路其展示方法：
+注册 `BDNadProtocol`（`NSURLProtocol` 子类）+ swizzle `NSURLSessionConfiguration` 的两个工厂方法。
+请求发出前按 host/path 判定，命中则直接返回 `200 {}`，不真正出网。
 
-- 类名匹配片段：`SplashAdvertise` / `PrologueAd` / `InterstitialAd` / `RewardVideoAd` /
-  `NativeAd` / `BannerAd` / `AdvertiseWindow` / `AdBaseTask` / `ADXAd` / `AppOpenAd` …
-- 方法名匹配前缀：`show` / `present` / `startShow` / `play` / `display` / `loadAndShow` …
+拦截清单来自 2026-10-15 的 Loon 抓包（`381_1792041072312.har`，632 条请求，30 秒窗口）：
 
-另有一层兜底：每秒扫描 key window，移除类名含 `Ad`/`Splash`/`Banner` 的视图。
+| 目标 | 域名 | 说明 |
+|---|---|---|
+| 趣盟 CPC 配置 | `cpc-service-square.yunxish.com` | `qumeng_config`，SDK 1.3.8 |
+| 趣盟备用域 | `cpc-service-square.iggrowth.cn` | `qumeng_host_config` |
+| 趣盟上报 | `*.yunxish.com`（report/logrcv/trace） | 曝光与点击 |
+| 开屏 NAD 开关 | `afdconf.baidu.com` | `nad_*` 全局开关下发 |
+| 广告素材 | `*.jomoxc.com:9082`、`*.antpcdn.com` | 天气/美食/主题等个性化 zip |
+| 广告素材路径 | `*.bcebos.com` + `/amis/` | 只拦该路径，不整域 |
+| 归因监测 | `nsclick.baidu.com`、`ef-dongfeng.tanx.com` | 点击追踪 |
+| 穿山甲 | `tnc3-alisc1.zijieapi.com` | HTTP DNS 配置 |
+| 火山上报 | `mssdk.volces.com` | 穿山甲/头条系埋点 |
+| 投屏穿山甲 | `conf.hpplay.cn` 等 | `csj_ad_switch:{enabled:1}` |
 
-设计成不硬编码类名，是因为该 IPA 的 ObjC 元数据疑似被加固壳剥离，
-`objc_getClass("BDNCSplashAdvertiseWindow")` 这类直接取类可能取不到。
-运行时遍历在壳没清空 `__objc_classlist` 的前提下才有效。
+## 已知限制（重要）
+
+**能拦**：`NSURLSession` + `AFNetworking` + `NSURLConnection`。抓包里 524 条 HTTP/1.1 + 104 条 HTTP/2 基本都走这条栈，覆盖面够。
+
+**拦不到**：
+
+1. **QUIC / Tquic**。`Tquic.framework` 直连 socket，不经过 `NSURLProtocol`。
+2. **自研 HTTP 栈**。`mssdk.volces.com`、`jomoxc.com:9082` 用非 80/443 端口，可能是裸 socket。
+3. **加载时被绕过的 session**。若 SDK 自建 `NSURLSession` 并显式指定 `protocolClasses`，swizzle 的默认工厂不生效。
+4. **加固壳**。若 App 有壳且 hook runtime，这套基于 `NSURLProtocol` 的注册也可能被拦。
+
+## 验证有没有生效
+
+```bash
+log stream --predicate 'eventMessage CONTAINS "BDNadBlock"'
+```
+
+看到 `[BDNadBlock] blocked [tag] host/path` 说明命中；一条都没有说明 dylib 没注入或 App 绕过了。
 
 ## 下载
 
-Actions → Build → Artifacts，下载 `BDNadBlock.dylib`：
+Actions → Build → Artifacts → `BDNadBlock.dylib`
 
-```
-https://github.com/fucknima/BDNadBlock/actions
-```
-
-Artifact 内含三个文件：
-
-| 文件 | 架构 | 用途 |
-|---|---|---|
-| `BDNadBlock.dylib` | FAT (arm64 + arm64e) | **用这个**，通用 |
-| `BDNadBlock-arm64.dylib` | arm64 | A12 及以后 |
-| `BDNadBlock-arm64e.dylib` | arm64e (PAC) | A12 及以后带 PAC |
-
-验证过的产物信息：`Mach-O universal binary, 2 architectures`，依赖
-`libobjc.A.dylib` / `UIKit` / `Foundation`，已 ldid 签名。
+| 文件 | 架构 |
+|---|---|
+| `BDNadBlock.dylib` | FAT (arm64 + arm64e)，**用这个** |
+| `BDNadBlock-arm64.dylib` | arm64 |
+| `BDNadBlock-arm64e.dylib` | arm64e (PAC) |
 
 ## 安装
 
 ```bash
-# 越狱设备（rootless）
 scp BDNadBlock.dylib <device>:/var/jb/Library/MobileSubstrate/DynamicLibraries/
 ssh <device> chmod 755 /var/jb/Library/MobileSubstrate/DynamicLibraries/BDNadBlock.dylib
 ssh <device> killall -9 SpringBoard
-
-# 侧载 IPA：用 ElleKit / Substrate 注入，或 AppSync 装 dylib
 ```
 
-装完重启网盘 App 生效。
+## 开关
 
-## 怎么确认有没有生效
-
-注入后查 syslog：
-
-```bash
-# 设备上
-log stream --predicate 'eventMessage CONTAINS "BDNadBlock"'
-```
-
-- 看到 `[BDNadBlock] total hooked: N` 且 N > 0 → hook 挂上了，按打到的类判断覆盖面
-- N = 0 或根本没这行 → 壳把 classlist 挡了，hook 无效，改用抓包关服务端开关
-
-## 已知限制
-
-- 未做越狱检测，纯注入用途
-- 不处理服务端下发的广告位开关（`bdnc_feed_ad_switch_*`），那些改二进制没用，得抓包
-- 无 iOS 设备实测，仅在 GitHub Actions 完成编译验证
+在 App 的 `NSUserDefaults` 里设 `BDNadBlockEnabled = NO` 可临时放行全部请求。
 
 ## 编译
 
-Actions 自动编译，产物在 Artifacts 里。或者本地：
+Actions 自动编译。或本地：
 
 ```bash
 export THEOS=~/theos
-make            # 只出 dylib 到 .theos/obj/debug/
+make
 ```
 
-CI 踩过的坑（已修，供参考）：
+CI 踩过的坑（已修）：
 
-- `install-theos` 脚本会打 `api.github.com`，Actions 上被限流返回 exit 8 → 改为直接 clone
-- 浅克隆不带 ldid，签名步骤 `ldid: command not found` → CI 里 `brew install ldid`
-- 管道后 `make` 失败会被吞掉 → 加 `set -o pipefail`，否则绿灯假成功
-- 默认输出在 `.theos/obj/debug/`，且是 FAT 合并产物，不是 `.theos/obj/arm64/`
+- `install-theos` 会打 `api.github.com`，Actions 限流 exit 8 → 改直接 clone
+- 浅克隆不带 ldid → CI 里 `brew install ldid`
+- `make | tail` 会吞掉失败退出码 → 加 `set -o pipefail`
+- 默认输出在 `.theos/obj/debug/`，且是 FAT 合并产物
