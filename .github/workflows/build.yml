@@ -24,6 +24,26 @@ jobs:
             -framework Foundation -o "$bin" tests/feature_removal_test.mm
           "$bin"
 
+      # Preferences.h 的读写原语/规格表测试（isolated suite，不碰 standardUserDefaults）。
+      # 这不是真机测试：不启 UIKit，菜单 UI 只能在真机或模拟器上看。
+      - name: Host test (Preferences.h, clang++, not a device test)
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/preferences_test"
+          clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
+            -framework Foundation -o "$bin" tests/preferences_test.mm
+          "$bin"
+
+      # NetworkRules.h 的 matcher 回归：与 Tweak.xm include 同一份真身实现，开关用内存假函数。
+      # 这不是真机测试：不注册 NSURLProtocol、不发请求，只证明规则命中与开关组合。
+      - name: Host test (NetworkRules.h, clang++, not a device test)
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/network_rules_test"
+          clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
+            -framework Foundation -o "$bin" tests/network_rules_test.mm
+          "$bin"
+
       # 不用 install-theos 脚本：它会打 api.github.com，CI 上容易被限流返回 exit 8
       - name: Install Theos + deps
         run: |
@@ -70,8 +90,9 @@ jobs:
           ls -la dist/
           file dist/*.dylib 2>/dev/null || true
 
+      # 只有 main 才产出可下载的库/包：验证分支（手工 dispatch）只编译 + 跑 host 测试，不上传半成品。
       - name: Upload dylib
-        if: success()
+        if: success() && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
           name: BDNadBlock.dylib
@@ -79,7 +100,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload deb
-        if: success()
+        if: success() && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
           name: BDNadBlock.deb
