@@ -77,6 +77,12 @@ static const unsigned BDPathRuleCount = sizeof(BDPathRules) / sizeof(BDPathRules
 
 #pragma mark - 匹配
 
+static BOOL BDEnabled(void) {
+    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+    id v = [d objectForKey:@"BDNadBlockEnabled"];
+    return v ? [v boolValue] : YES;
+}
+
 static NSString *BDMatchHost(NSString *host, NSString *path) {
     if (!host.length) return nil;
     host = host.lowercaseString;
@@ -138,6 +144,7 @@ static NSURLSessionConfiguration *BDInjectProtocol(NSURLSessionConfiguration *c)
 @implementation BDNadProtocol
 
 + (BOOL)canInitWithRequest:(NSURLRequest *)request {
+    if (!BDEnabled()) return NO;
     NSString *host = request.URL.host;
     NSString *tag = BDMatchHost(host, request.URL.path);
     if (!tag) return NO;
@@ -186,12 +193,6 @@ static NSURLSessionConfiguration *BDInjectProtocol(NSURLSessionConfiguration *c)
 @end
 
 #pragma mark - 注册
-
-static BOOL BDEnabled(void) {
-    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-    id v = [d objectForKey:@"BDNadBlockEnabled"];
-    return v ? [v boolValue] : YES;
-}
 
 static void BDRegisterProtocol(void) {
     static dispatch_once_t once;
