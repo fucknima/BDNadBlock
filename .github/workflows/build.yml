@@ -11,6 +11,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check ObjC metadata parser
+        run: python3 scripts/verify_selectors.py --selftest
+
+      # FeatureRemoval.h 的机制测试（动态 fake 类 + 真实同名 selector）。
+      # 这不是真机测试：只证明匹配时抑制/不符时跳过/透传原实现/幂等不递归/不动父类。
+      - name: Host test (FeatureRemoval.h, clang++, not a device test)
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/feature_removal_test"
+          clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
+            -framework Foundation -o "$bin" tests/feature_removal_test.mm
+          "$bin"
+
       # 不用 install-theos 脚本：它会打 api.github.com，CI 上容易被限流返回 exit 8
       - name: Install Theos + deps
         run: |
@@ -58,7 +71,7 @@ jobs:
           file dist/*.dylib 2>/dev/null || true
 
       - name: Upload dylib
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: BDNadBlock.dylib
@@ -66,7 +79,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload deb
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: BDNadBlock.deb

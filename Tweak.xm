@@ -1,6 +1,6 @@
 // BDNadBlock — 广告拦截 + 移除推荐内容/游戏中心
 //
-// 所有规则都来自实证，没有猜的：
+// 证据范围（命中规则/安装 hook 不等于功能已移除）：
 //   A. 2026-10-15 Loon 抓包（632 条请求 / 30s），逐条看响应体定性
 //   B. __objc_classlist 34952 项 -> class_ro_t.baseMethodList 解析出的真实方法名
 //      scripts/verify_selectors.py 会核对每个 selector 是否存在、返回类型是否安全。
@@ -31,15 +31,21 @@
 // 方法层（18 个 selector，11 个类，全部经二进制核对）：
 //   只 hook「把广告显示出来」这一步，不碰 bidding/task/timeout。
 //   理由：task 管理器持有 splash 超时计时器（handleAdvertiseFetchTimeOutEvent /
-//   startAdvertiseFetchTimer），动了它可能让开屏卡死。掐显示层则最坏是「没广告」。
-//   全部返回 v(void) 或 B(BOOL)，no-op 返回 nil/NO 落在 x0，调用方不会读到垃圾。
+//   startAdvertiseFetchTimer）。显示层 no-op 的回调与超时行为仍需真机验证。
+//   元数据确认返回 v(void) 或 B(BOOL)，这不证明业务状态与布局安全。
+//
+// 精准 feature hook（3 个，实现见 FeatureRemoval.h，构造器里同步安装）：
+//   首页「推荐/创意」整块 = +[BHSettings isMSHSwitchTypeHomeRecommend] 与
+//   -[BDPanNewMSHContentViewController tableView:numberOfRowsInSection:] 一对；
+//   我的页游戏中心 = +[BDPanPersonalConfig gameCenterSwitch]。
+//   先存原 IMP 再换，调用时按开关透传；签名不符/方法不在本类自己的表里就 skip。
 //
 // 防崩：
 //   - 不交换 IMP，用 method_setImplementation + 保存原 IMP 直调（交换写反 = 无限递归，
 //     上一版就是栽在这里：depth 12353 打穿 Stack Guard）
 //   - 返回结构体/浮点的方法一律不碰（no-op 只保证 x0 有效，s0/x1 是垃圾）
 //   - 跳过 init/dealloc/copy/load/setter 等生命周期方法
-//   - NSURLSessionConfiguration 的 hook 延迟到 app ready，避开 dyld 的 notifyObjCInit
+//   - 网络 hook 目前延迟 1.5 秒；定时器不代表 app ready，已有 session 也不会被改写
 //
 // 日志：syslog + 沙盒 Documents/BDNadBlock-dump.txt（可取出）
 
@@ -89,7 +95,7 @@ static void BDLog(NSString *fmt, ...) {
     });
 }
 
-// 在 app ready 之后调用：此时才解析路径并打开落盘开关。
+// 在延迟启动阶段调用：此时解析路径并打开落盘开关。
 // 缓冲区从进程启动就在累积，所以第一次落盘会把之前的日志一起写下去。
 static void BDLogPathReport(void) {
     dispatch_async(BDLogQueue, ^{
@@ -111,6 +117,10 @@ static BOOL BDDumpOnly(void)      { return BDDefault(@"BDNadBlockDumpOnly", NO);
 static BOOL BDBlockNetwork(void)  { return BDDefault(@"BDNadBlockNetwork", YES); }
 static BOOL BDRemoveRecommend(void)  { return BDDefault(@"BDRemoveRecommend", YES); }
 static BOOL BDRemoveGameCenter(void) { return BDDefault(@"BDRemoveGameCenter", YES); }
+
+// 精准 feature hook（3 个：首页推荐/创意整块 + 我的页游戏中心）。
+// 放在开关之后 include：它依赖上面的 BDLog / BDEnabled / BDDumpOnly / BDRemove*。
+#include "FeatureRemoval.h"
 
 #pragma mark - 网络拦截规则（全部经抓包响应体证实）
 
@@ -206,7 +216,7 @@ static NSURLSessionConfiguration *BDInjectProtocol(NSURLSessionConfiguration *c)
 
 // 不交换 IMP。交换会把 SEL 指向彼此，写反一次就是无限递归
 // ——上一版正是这么崩的（depth 12353 打穿 Stack Guard）。
-// 这里保存原 IMP 后直接调用，结构上不可能递归。
+// 保存原 IMP 后直调，避免通过被替换的 selector 再次进入自身。
 static IMP BDOrigDefaultCfg;
 static IMP BDOrigEphemeralCfg;
 
@@ -255,8 +265,8 @@ static id BDEphemeralCfgHooked(id self, SEL _cmd) {
 static void BDSetupNetwork(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        // 延迟到 app ready：崩溃栈显示 Foundation 在 notifyObjCInit 阶段
-        // 就会调用 ephemeralSessionConfiguration，那时介入会撞上未初始化的状态。
+        // 保留旧版 1.5 秒延迟。已确认的崩溃根因是递归；
+        // 崩溃栈本身不能证明 Foundation 未初始化，也不能证明延迟能防崩。
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
             Class c = [NSURLSessionConfiguration class];
@@ -416,6 +426,8 @@ static void BDWalkMethods(Class cls, NSString *clsName, NSArray *wanted) {
 
 static void BDBoot(void) {
     BDLogPathReport();
+    BDLog(@"[BDNadBlock] switches enabled=%d dumpOnly=%d network=%d recommend=%d gameCenter=%d",
+          BDEnabled(), BDDumpOnly(), BDBlockNetwork(), BDRemoveRecommend(), BDRemoveGameCenter());
     NSDictionary *map = BDHookMap();
     unsigned dumped = 0, missing = 0;
 
@@ -445,6 +457,9 @@ static void BDBoot(void) {
 __attribute__((constructor))
 static void BDNadBlockInit(void) {
     BDLog(@"[BDNadBlock] loaded (network + recommend/game-center removal)");
+    // 精准 feature hook 在这里同步装完（不走下面的 1.5s / 3s 定时器）。
+    // 只有冷启动、且这里发生在页面组装之前才生效；真机以 [BDNadFeature] installed 日志为准。
+    BDFRInstallAll();
     BDSetupNetwork();
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ BDBoot(); });

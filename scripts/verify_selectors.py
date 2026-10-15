@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""核对 BDHookMap 里的每个 selector 是否真实存在、返回类型是否可安全 no-op。
+"""核对 selector 的存在与返回类型；不证明回调、布局或业务状态安全。
 
 用法:
     python3 scripts/verify_selectors.py /path/to/netdisk_iPhone
 
-App 升级后重跑一次。退出码非 0 表示有 selector 失效或返回类型不安全，
-必须先更新 Tweak.xm 的 BDHookMap 再发版。
+App 升级后重跑一次。退出码非 0 表示有 selector 失效、返回类型不安全，或 feature hook 的
+类/encoding 变了，必须先更新 Tweak.xm 的 BDHookMap() 与 FeatureRemoval.h 的 BDFRSpec 表再发版。
 
 做法（不依赖 LIEF，纯 struct 解析 Mach-O）:
     __objc_classlist[i] -> class_t
     class_t + 32        -> class_ro_t*   (低 3 位是 flag，要清掉)
     class_ro_t + 24     -> 类名
     class_ro_t + 32     -> method_list_t
+    class_t + 0         -> metaclass（类方法自己的方法表，即 + 的实现所在）
     method_list_t       -> {entsizeAndFlags, count, entries...}
-      entsizeAndFlags & 3 == 3 -> 相对 method list，每项 3 个 int32 偏移
-      否则                     -> 绝对指针，每项 3 个 uint64
+      entsizeAndFlags & 0x80000000 -> 相对 method list，每项 3 个 int32 偏移
+      否则                         -> 绝对指针，每项 3 个 uint64
     每项的 name/types 都是相对/绝对 C 字符串指针
 """
 import struct
@@ -48,10 +49,123 @@ HOOK_MAP = {
     ],
 }
 
+# 精准 feature hook（FeatureRemoval.h）：替换实现，必须编码逐字节一致才装。
+# (类名, +/- , selector, 完整 type encoding)；+ 表示类方法，方法必须落在 metaclass 自己的方法表里。
+FEATURE_HOOKS = [
+    ("BHSettings", "+", "isMSHSwitchTypeHomeRecommend", "B16@0:8"),
+    ("BDPanNewMSHContentViewController", "-", "tableView:numberOfRowsInSection:", "q32@0:8@16q24"),
+    ("BDPanPersonalConfig", "+", "gameCenterSwitch", "B16@0:8"),
+]
+
 # no-op 只保证 x0 有效。返回结构体/浮点/复数的方法调用方会读 s0/x1/v0 —— 垃圾。
 SAFE_RETURN = set("v@#:BcCsSiIlLqQ^*")
 
 LC_SEGMENT_64 = 0x19
+
+
+def entry_addresses(mm, fileoff, vmaddr, flags, u64):
+    if flags & 0x80000000:
+        name_offset, type_offset = struct.unpack_from('<ii', mm, fileoff)
+        name_ptr = vmaddr + name_offset
+        if not flags & 0x40000000:
+            name_ptr = u64(name_ptr) or 0
+        return name_ptr, vmaddr + 4 + type_offset
+    return u64(vmaddr), u64(vmaddr + 8)
+
+
+def method_list(mm, vm2off, u32, u64, cstr, ml):
+    """读一个 method_list_t -> {selector: type encoding}。"""
+    out = {}
+    if not ml:
+        return out
+    ef, cnt = u32(ml), u32(ml + 4)
+    if ef is None or cnt is None or cnt > 20000:
+        return out
+    # objc4 method_list_t::smallMethodListFlag；低两位是 fixup 标记。
+    entsize, relative = ef & 0xFFFC, bool(ef & 0x80000000)
+    for k in range(cnt):
+        ep = ml + 8 + k * entsize
+        po = vm2off(ep)
+        if po is None:
+            continue
+        if relative and entsize >= 12:
+            name_ptr, type_ptr = entry_addresses(mm, po, ep, ef, u64)
+        elif entsize >= 24:
+            name_ptr, type_ptr = entry_addresses(mm, po, ep, ef, u64)
+        else:
+            continue
+        sel, enc = cstr(name_ptr), cstr(type_ptr)
+        if sel:
+            out[sel] = enc
+    return out
+
+
+def class_ro(u64, cls):
+    data = u64(cls + 32)
+    return (data & ~0x7) if data else 0
+
+
+def class_name(u64, cstr, cls):
+    ro = class_ro(u64, cls)
+    return cstr(u64(ro + 24) or 0) if ro else None
+
+
+def own_methods(mm, vm2off, u32, u64, cstr, cls):
+    """class_t **自己**（不沿继承链）的方法 -> {selector: encoding}。
+
+    类方法要传 metaclass（class_t + 0 是 isa）：本脚本核对的就是运行时
+    class_copyMethodList 看到的那张表，继承来的实现不在这里。
+    """
+    ro = class_ro(u64, cls)
+    return method_list(mm, vm2off, u32, u64, cstr, u64(ro + 32)) if ro else {}
+
+
+def selftest():
+    data = bytearray(256)
+    struct.pack_into('<ii', data, 32, 64, 92)
+    struct.pack_into('<Q', data, 96, 192)
+    read_pointer = lambda p: struct.unpack_from('<Q', data, p)[0]
+    assert entry_addresses(data, 32, 32, 0x8000000C, read_pointer) == (192, 128)
+    assert entry_addresses(data, 32, 32, 0xC000000C, read_pointer) == (96, 128)
+    struct.pack_into('<QQ', data, 32, 192, 128)
+    assert entry_addresses(data, 32, 32, 24, read_pointer) == (192, 128)
+    print('method_list_t 相对/直接/绝对三种解析检查通过')
+
+    # class_t -> ro -> 自己方法表（绝对编码），外加 class_t.isa 上的 metaclass 及其自己的方法表。
+    # 本测试里地址即偏移；所有字符串都用等长 slice 写入并带 \0，避免改变 bytearray 长度。
+    img = bytearray(1024)
+    rd_u32 = lambda a: struct.unpack_from('<I', img, a)[0]
+    rd_u64 = lambda a: struct.unpack_from('<Q', img, a)[0]
+    def rd_cstr(a):
+        end = img.find(b'\0', a)
+        return img[a:end].decode() if end >= 0 else None
+    def vm2off(a):
+        return a if 0 <= a < len(img) else None
+    struct.pack_into('<Q', img, 64, 320)               # class_t.isa -> metaclass
+    struct.pack_into('<Q', img, 64 + 32, 128 | 3)      # class_t.data = ro | flag
+    struct.pack_into('<Q', img, 128 + 24, 512)         # ro.name
+    struct.pack_into('<Q', img, 128 + 32, 176)         # ro.baseMethodList
+    struct.pack_into('<II', img, 176, 24, 1)           # 绝对表，entsize 24，1 项
+    struct.pack_into('<QQQ', img, 184, 528, 544, 0)    # name / type / imp
+    struct.pack_into('<Q', img, 320 + 32, 384 | 3)     # metaclass.data = ro | flag
+    struct.pack_into('<Q', img, 384 + 24, 560)         # metaclass ro.name
+    struct.pack_into('<Q', img, 384 + 32, 432)         # metaclass ro.baseMethodList
+    struct.pack_into('<II', img, 432, 24, 1)
+    struct.pack_into('<QQQ', img, 440, 576, 592, 0)
+    img[512:522] = b'BDFRFake\0\0'
+    img[528:536] = b'bsel\0\0\0\0'
+    img[544:554] = b'B16@0:8\0\0\0'
+    img[560:570] = b'BDFRMeta\0\0'
+    img[576:584] = b'mbool\0\0\0'
+    img[592:602] = b'B16@0:8\0\0\0'
+    assert len(img) == 1024                            # 等长写入，地址没有漂移
+    assert class_ro(rd_u64, 64) == 128
+    assert class_name(rd_u64, rd_cstr, 64) == 'BDFRFake'
+    assert own_methods(img, vm2off, rd_u32, rd_u64, rd_cstr, 64) == {'bsel': 'B16@0:8'}
+    meta = rd_u64(64)                                  # class_t.isa
+    assert class_name(rd_u64, rd_cstr, meta) == 'BDFRMeta'
+    assert own_methods(img, vm2off, rd_u32, rd_u64, rd_cstr, meta) == {'mbool': 'B16@0:8'}
+    print('class_t/class_ro_t/自己方法表（含 class_t.isa 上的 metaclass 方法表）解析检查通过')
 
 
 def main(path):
@@ -101,41 +215,20 @@ def main(path):
     if "__objc_classlist" not in secmap:
         sys.exit("找不到 __objc_classlist —— 可能被加固剥离了 ObjC 元数据")
 
-    want = {c: set(s) for c, s in HOOK_MAP.items()}
-    got = {}
+    # 一次扫完 classlist，收集两边要用的类（不引入第二个解析器）。
+    need = set(HOOK_MAP) | {h[0] for h in FEATURE_HOOKS}
+    classes = {}
     _va, size, foff = secmap["__objc_classlist"]
     for i in range(size // 8):
         cls = struct.unpack_from("<Q", mm, foff + i * 8)[0]
         if not cls:
             continue
-        data = u64(cls + 32)
-        if not data:
-            continue
-        ro = data & ~0x7                      # 清掉低 3 位 flag
-        name = cstr(u64(ro + 24) or 0)
-        if name not in want:
-            continue
-        ml = u64(ro + 32)
-        if not ml:
-            continue
-        ef, cnt = u32(ml), u32(ml + 4)
-        if ef is None or cnt is None or cnt > 20000:
-            continue
-        entsize, relative = ef & 0xFFFC, (ef & 0x3) == 0x3
-        for k in range(cnt):
-            ep = ml + 8 + k * entsize
-            po = vm2off(ep)
-            if po is None:
-                continue
-            if relative and entsize >= 12:
-                noff, toff = struct.unpack_from("<ii", mm, po)
-                sel, enc = cstr(ep + noff), cstr(ep + toff)
-            elif entsize >= 24:
-                sel, enc = cstr(u64(ep)), cstr(u64(ep + 8))
-            else:
-                continue
-            if sel in want[name]:
-                got.setdefault(name, {})[sel] = enc
+        name = class_name(u64, cstr, cls)
+        if name in need:
+            classes[name] = cls
+
+    got = {n: own_methods(mm, vm2off, u32, u64, cstr, c)
+           for n, c in classes.items() if n in HOOK_MAP}
 
     bad = 0
     print(f"{'返回类型':<11} {'判定':<5} 类 / selector")
@@ -152,13 +245,36 @@ def main(path):
                 bad += 1
             print(f"{enc[:10]:<11} {'OK' if ok else '不安全':<5} {cls}  -{sel}")
 
+    # feature hook：要替换实现，所以只认「本类自己的方法表 + 完整 encoding 一致」。
+    print()
+    print("feature hook（替换实现；+ 走 metaclass 自己的方法表，继承来的不算）")
+    print("-" * 76)
+    for cls, kind, sel, enc in FEATURE_HOOKS:
+        target = classes.get(cls)
+        if target is None:
+            actual = "类缺失"
+        else:
+            # 类方法的实现落在 metaclass：class_t + 0 是 isa
+            actual = own_methods(mm, vm2off, u32, u64, cstr,
+                                 u64(target) if kind == "+" else target).get(sel)
+            if actual is None:
+                actual = "不在本类自己的方法表"
+        ok = actual == enc
+        if not ok:
+            bad += 1
+        print(f"{kind}{cls}  {sel}")
+        print(f"{'':<2}{'OK' if ok else '不一致':<6} 期望 {enc} 实际 {actual}")
+
     print("-" * 76)
     total = sum(len(v) for v in HOOK_MAP.values())
-    print(f"{total} 个 selector，{bad} 个有问题")
+    print(f"{total} 个广告 selector + {len(FEATURE_HOOKS)} 个 feature hook，{bad} 个有问题")
     return 1 if bad else 0
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ['--selftest']:
+        selftest()
+        sys.exit(0)
     if len(sys.argv) != 2:
         sys.exit(f"用法: {sys.argv[0]} /path/to/netdisk_iPhone")
     sys.exit(main(sys.argv[1]))
