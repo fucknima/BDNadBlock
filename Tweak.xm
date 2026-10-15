@@ -70,11 +70,8 @@ static BOOL BDIsAdSelector(const char *sel) {
 
 // ---------- 短路实现 ----------
 
-// arm64 下返回值走 x0，直接清零即可对任意返回类型成立
-typedef id (*BDMsgIMP)(id, SEL, ...);
-static IMP BDTrampoline = NULL;
-
-static id BDNoop(id self_, SEL _cmd, ...) {
+// 返回值走 arm64 的 x0，返回 nil 对任意返回类型都成立
+static id BDNoopBlock(id self_, SEL _cmd) {
     return nil;
 }
 
@@ -91,7 +88,7 @@ static void BDHookAllAdClasses(void) {
     Class *classes = (Class *)malloc(sizeof(Class) * count);
     count = objc_getClassList(classes, count);
 
-    BDTrampoline = imp_implementationWithBlock(BDNoop);
+    IMP BDTrampoline = imp_implementationWithBlock(BDNoopBlock);
 
     for (int i = 0; i < count; i++) {
         Class cls = classes[i];
@@ -108,7 +105,7 @@ static void BDHookAllAdClasses(void) {
             // 只拦对象方法；类方法不动，避免破坏单例初始化
             if (!class_isMetaClass(cls)) {
                 method_setImplementation(methods[m], BDTrampoline);
-                NSLog(@"[BDNadBlock] hooked -[%@ %@]", NSStringFromClass(cls), sname);
+                NSLog(@"[BDNadBlock] hooked -[%@ %s]", NSStringFromClass(cls), sname);
                 BDHookedCount++;
             }
         }
@@ -148,7 +145,30 @@ static void BDPurgeAdViewsInView(UIView *root) {
 
 @implementation BDPurger
 + (void)tick {
-    for (UIWindow *w in [UIApplication sharedApplication].windows) {
+    NSMutableArray<UIWindow *> *windows = [NSMutableArray array];
+    UIWindow *key = nil;
+    if (@available(iOS 13.0, *)) {
+        for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
+            if (![s isKindOfClass:[UIWindowScene class]]) continue;
+            for (UIWindow *w in ((UIWindowScene *)s).windows) [windows addObject:w];
+            if (((UIWindowScene *)s).keyWindow) key = ((UIWindowScene *)s).keyWindow;
+        }
+    }
+    if (windows.count == 0) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        [windows addObjectsFromArray:[UIApplication sharedApplication].windows];
+#pragma clang diagnostic pop
+    }
+    if (!key) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        key = [UIApplication sharedApplication].keyWindow;
+#pragma clang diagnostic pop
+    }
+    if (key && !windows.count) [windows addObject:key];
+
+    for (UIWindow *w in windows) {
         if (!w.hidden) BDPurgeAdViewsInView(w);
     }
 }
@@ -184,12 +204,15 @@ static void BDNadBlockInit(void) {
             BDHookAllAdClasses();
             BDEnableViewPurge();
         }
-        [NSNotificationCenter defaultCenter]
-            addObserverForName:UIApplicationDidBecomeActiveNotification
-                        object:nil queue:[NSOperationQueue mainQueue]
-                    usingBlock:^(NSNotification *n) {
+        __block id token = nil;
+        token = [[NSNotificationCenter defaultCenter]
+                 addObserverForName:UIApplicationDidBecomeActiveNotification
+                             object:nil
+                              queue:[NSOperationQueue mainQueue]
+                         usingBlock:^(NSNotification *n) {
             if (BDReadBoolFromDefaults(@"BDNadBlockEnabled", YES))
                 [BDPurger tick];
         }];
+        (void)token;
     });
 }
