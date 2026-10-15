@@ -44,6 +44,15 @@ jobs:
             -framework Foundation -o "$bin" tests/network_rules_test.mm
           "$bin"
 
+      # SettingsMenu.h 还没 include 进 Tweak.xm（菜单入口未接），所以单独拿 iOS SDK 做语法检查，
+      # 免得它漏掉编译检查。这不是 UI 运行测试：-fsyntax-only 不产出 app、不启动模拟器、不建工程。
+      - name: Compile UIKit settings menu (syntax only, not runtime)
+        run: |
+          set -euo pipefail
+          sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
+            -target arm64-apple-ios15.0 -isysroot "$sdk" -x objective-c++ -fsyntax-only SettingsMenu.h
+
       # 不用 install-theos 脚本：它会打 api.github.com，CI 上容易被限流返回 exit 8
       - name: Install Theos + deps
         run: |
