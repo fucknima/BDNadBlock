@@ -32,6 +32,7 @@ static IMP BDNoopIMP;
 static NSMutableString *BDLogBuffer;
 static NSString *BDLogPath;
 static dispatch_queue_t BDLogQueue;
+static BOOL BDLogFileEnabled = NO;   // app ready 之后才开
 
 static NSString *BDResolveLogPath(void) {
     NSString *docs = NSSearchPathForDirectoriesInDomains(
@@ -58,13 +59,18 @@ static void BDLog(NSString *fmt, ...) {
     dispatch_async(BDLogQueue, ^{
         [BDLogBuffer appendString:msg];
         [BDLogBuffer appendString:@"\n"];
-        [BDLogBuffer writeToFile:BDLogPath atomically:YES
-                         encoding:NSUTF8StringEncoding error:NULL];
+        // 启动期不落盘：构造器阶段沙盒还没完全可用，写文件会拖慢启动并可能在
+        // 早于 Foundation 初始化时触发异常。延迟到 app ready 之后再开写。
+        if (BDLogFileEnabled) {
+            [BDLogBuffer writeToFile:BDLogPath atomically:YES
+                             encoding:NSUTF8StringEncoding error:NULL];
+        }
     });
 }
 
 static void BDLogPathReport(void) {
     dispatch_async(BDLogQueue, ^{
+        BDLogFileEnabled = YES;
         BDLog(@"[BDNadBlock] log file: %@", BDLogPath);
     });
 }
@@ -179,13 +185,16 @@ static NSURLSessionConfiguration *BDInjectProtocol(NSURLSessionConfiguration *c)
     return c;
 }
 
-// 方法交换后，bd_ 里的同名调用指向原实现，不递归
+// 关键：method_exchangeImplementations 之后，
+//   sel(defaultSessionConfiguration)  → 我们的实现
+//   sel(bd_defaultSessionConfiguration) → 原实现
+// 所以这里必须调 bd_ 版本才拿到原实现；调 defaultSessionConfiguration 会无限递归。
 @implementation NSURLSessionConfiguration (BDNad)
 + (instancetype)bd_defaultSessionConfiguration {
-    return BDInjectProtocol([self defaultSessionConfiguration]);
+    return BDInjectProtocol([self bd_defaultSessionConfiguration]);
 }
 + (instancetype)bd_ephemeralSessionConfiguration {
-    return BDInjectProtocol([self ephemeralSessionConfiguration]);
+    return BDInjectProtocol([self bd_ephemeralSessionConfiguration]);
 }
 @end
 
@@ -228,21 +237,54 @@ static NSURLSessionConfiguration *BDInjectProtocol(NSURLSessionConfiguration *c)
 static void BDSetupNetwork(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        Class c = [NSURLSessionConfiguration class];
-        struct { SEL orig, rep; } pairs[] = {
-            {@selector(defaultSessionConfiguration),  @selector(bd_defaultSessionConfiguration)},
-            {@selector(ephemeralSessionConfiguration), @selector(bd_ephemeralSessionConfiguration)},
-        };
-        for (unsigned i = 0; i < sizeof(pairs)/sizeof(pairs[0]); i++) {
-            Method om = class_getClassMethod(c, pairs[i].orig);
-            Method rm = class_getClassMethod(c, pairs[i].rep);
-            if (om && rm) method_exchangeImplementations(om, rm);
-        }
-        [NSURLProtocol registerClass:[BDNadProtocol class]];
-        BDLog(@"[BDNadBlock] network layer on (hosts=%zu paths=%zu suffixes=%zu)",
-              sizeof(BDHostRules)/sizeof(BDHostRules[0]),
-              sizeof(BDPathRules)/sizeof(BDPathRules[0]),
-              sizeof(BDSuffixRules)/sizeof(BDSuffixRules[0]));
+        // 必须延迟：崩溃栈显示 Foundation 在 notifyObjCInit 阶段就会调用
+        // ephemeralSessionConfiguration，此时太早介入会撞上未初始化的系统状态。
+        // 1.5s 后 app 已完成启动，Foundation/URL Loading System 都就绪。
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            Class c = [NSURLSessionConfiguration class];
+            struct { SEL orig, rep; } pairs[] = {
+                {@selector(defaultSessionConfiguration),  @selector(bd_defaultSessionConfiguration)},
+                {@selector(ephemeralSessionConfiguration), @selector(bd_ephemeralSessionConfiguration)},
+            };
+            BOOL ok = YES;
+            for (unsigned i = 0; i < sizeof(pairs)/sizeof(pairs[0]); i++) {
+                Method om = class_getClassMethod(c, pairs[i].orig);
+                Method rm = class_getClassMethod(c, pairs[i].rep);
+                if (om && rm) {
+                    method_exchangeImplementations(om, rm);
+                } else {
+                    ok = NO;
+                    BDLog(@"[BDNadBlock] swizzle pair %d missing (orig=%p rep=%p)",
+                          (int)i, om, rm);
+                }
+            }
+            if (!ok) {
+                BDLog(@"[BDNadBlock] swizzle incomplete, network layer disabled");
+                return;
+            }
+            [NSURLProtocol registerClass:[BDNadProtocol class]];
+
+            // 自检：在后台线程调一次，确认交换后没有递归。
+            // 若写错会在这里栈溢出崩掉，但崩的是这条临时线程，不影响主线程。
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                @try {
+                    NSURLSessionConfiguration *c = [NSURLSessionConfiguration defaultSessionConfiguration];
+                    NSURLSessionConfiguration *e = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+                    BOOL hasDefault = [c.protocolClasses containsObject:[BDNadProtocol class]];
+                    BOOL hasEph = [e.protocolClasses containsObject:[BDNadProtocol class]];
+                    BDLog(@"[BDNadBlock] selftest: default=%d ephemeral=%d (want 1/1)",
+                          hasDefault, hasEph);
+                } @catch (NSException *ex) {
+                    BDLog(@"[BDNadBlock] selftest threw: %@", ex.reason);
+                }
+            });
+
+            BDLog(@"[BDNadBlock] network layer on (hosts=%zu paths=%zu suffixes=%zu)",
+                  sizeof(BDHostRules)/sizeof(BDHostRules[0]),
+                  sizeof(BDPathRules)/sizeof(BDPathRules[0]),
+                  sizeof(BDSuffixRules)/sizeof(BDSuffixRules[0]));
+        });
     });
 }
 
