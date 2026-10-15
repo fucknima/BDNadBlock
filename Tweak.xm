@@ -88,7 +88,7 @@ static void BDHookAllAdClasses(void) {
     Class *classes = (Class *)malloc(sizeof(Class) * count);
     count = objc_getClassList(classes, count);
 
-    IMP BDTrampoline = imp_implementationWithBlock(BDNoopBlock);
+    IMP BDTrampoline = imp_implementationWithBlock((id (^)(id, SEL))BDNoopBlock);
 
     for (int i = 0; i < count; i++) {
         Class cls = classes[i];

@@ -22,8 +22,9 @@ jobs:
 
       - name: Build tweak
         run: |
+          set -o pipefail
           make clean
-          make package FINALPACKAGE=1 THEOS="$THEOS" 2>&1 | tail -40
+          make package FINALPACKAGE=1 THEOS="$THEOS" 2>&1 | tee build.log | tail -40
 
       - name: Upload dylib
         if: always()
