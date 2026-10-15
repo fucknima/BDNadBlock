@@ -86,7 +86,8 @@ static BDFRSpec BDFRTestSpec(const char *cls, const char *sel, BOOL isClassMetho
 #pragma mark - 替身实现
 
 // B 编码的替身实现用内建 bool 作为返回值（与 "B16@0:8" 一致，不用 BOOL）。
-static unsigned gBoolNoCalls = 0;
+static unsigned gBoolNoCalls = 0;                  // 原实现被调次数
+static unsigned gBoolYesCalls = 0;                 // 替换实现被调次数（分开数，否则证明不了谁被调）
 static bool PhBoolNo(id self, SEL _cmd) {          // 当「原实现」：恒 false
     (void)self; (void)_cmd;
     gBoolNoCalls++;
@@ -94,7 +95,7 @@ static bool PhBoolNo(id self, SEL _cmd) {          // 当「原实现」：恒 f
 }
 static bool PhBoolYes(id self, SEL _cmd) {         // 当「替换实现」：恒 true
     (void)self; (void)_cmd;
-    gBoolNoCalls++;
+    gBoolYesCalls++;
     return true;
 }
 
@@ -260,9 +261,11 @@ static void test_install_success_and_idempotent(void) {
 
     // 装了替换实现后，原实现不再被调用；重复安装也不会让它被调两次（这里 hook 是哑替身，
     // 真正「透传 + 不递归」的验证在 test_real_specs 用真实 hook 做）
-    unsigned before = gBoolNoCalls;
+    unsigned beforeNo = gBoolNoCalls;
+    unsigned beforeYes = gBoolYesCalls;
     CHECK(BDFRSendBool(obj, sel) == true);
-    CHECK(gBoolNoCalls == before);
+    CHECK(gBoolNoCalls == beforeNo);              // 原 false 实现确实没被调
+    CHECK(gBoolYesCalls == beforeYes + 1);        // 命中的就是替换实现
 }
 
 #pragma mark - 三个真实 spec + 真实同名类/selector
