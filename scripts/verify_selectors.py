@@ -49,12 +49,44 @@ HOOK_MAP = {
     ],
 }
 
-# 精准 feature hook（FeatureRemoval.h）：替换实现，必须编码逐字节一致才装。
+# 精准 feature hook：替换实现，必须编码逐字节一致才装。
+# encoding 一律照抄各组件的 spec 表（FeatureRemoval.h / SearchDataRemoval.h /
+# SearchViewRemoval.h / MenuEntry.h），不在这里另猜；App 升级后连 spec 表一起核对。
 # (类名, +/- , selector, 完整 type encoding)；+ 表示类方法，方法必须落在 metaclass 自己的方法表里。
 FEATURE_HOOKS = [
     ("BHSettings", "+", "isMSHSwitchTypeHomeRecommend", "B16@0:8"),
     ("BDPanNewMSHContentViewController", "-", "tableView:numberOfRowsInSection:", "q32@0:8@16q24"),
     ("BDPanPersonalConfig", "+", "gameCenterSwitch", "B16@0:8"),
+    # 首页金刚区去掉求职(13)/小说(6)：包装 +cacheKingKongsConfigArray 的最终数组。
+    ("BDPanFeedHomeConfig", "+", "cacheKingKongsConfigArray", "@16@0:8"),
+    # 搜索框数据层：清空服务端轮播词（唯一写入口，argv 3）。
+    ("BDPanSearchManager", "-", "setStaticWordList:", "v24@0:8@16"),
+    # 搜索框 UI 层：三条 post-hook，整组校验通过才装。
+    ("BDPanNewMSHSearchView", "-", "setupView", "v16@0:8"),
+    ("BDPanNewMSHSearchView", "-", "searchPlaceholderUpdated:", "v24@0:8@16"),
+    ("BDPanNewMSHSearchView", "-", "updateConstraintsWithProgress:", "v24@0:8d16"),
+    # 设置页入口按钮：两个候选类各自一条 -viewDidLoad，互不依赖。
+    ("SettingConfigViewController", "-", "viewDidLoad", "v16@0:8"),
+    ("SettingViewController", "-", "viewDidLoad", "v16@0:8"),
+]
+
+# **依赖** accessor：hook 自己不发消息，是安装前只读校验的对象（校验不过就整条跳过）。
+# 同样要求完整 encoding 一致 —— 它变了，过滤逻辑就会按错误布局读 id 或错调清空路径。
+FEATURE_DEPS = [
+    # H4 的依赖：-kingKongId 是 q16@0:8。
+    ("BDPanFHKingKongsModel", "-", "kingKongId", "q16@0:8"),
+    # 搜索框三条 post-hook 的 getter 依赖：全部 @16@0:8（id 返回）。
+    ("BDPanNewMSHSearchView", "-", "searchButton", "@16@0:8"),
+    ("BDPanNewMSHSearchView", "-", "scrollLabel", "@16@0:8"),
+    ("BDPanNewMSHSearchView", "-", "scrollLabelConfig", "@16@0:8"),
+    ("BDPanNewMSHSearchView", "-", "genflowButton", "@16@0:8"),
+    ("BDPanNewMSHSearchView", "-", "genflowAnimationView", "@16@0:8"),
+    ("BDPanNewMSHSearchView", "-", "cameraButton", "@16@0:8"),
+    ("BDPanNewMSHSearchView", "-", "cameraButtonAnimateBackground", "@16@0:8"),
+    # 轮播清理的清空路径：这两个是 **void 返回**（v24@0:8@16），不是 @ 返回 ——
+    # 写成 @ 返回会误判成「宿主签名不符」而整组放弃。
+    ("BDPanVerticalScrollLableViewConfig", "-", "setTexts:", "v24@0:8@16"),
+    ("BDPanVerticalScrollLableView", "-", "configWithLabelConfig:", "v24@0:8@16"),
 ]
 
 # no-op 只保证 x0 有效。返回结构体/浮点/复数的方法调用方会读 s0/x1/v0 —— 垃圾。
@@ -216,7 +248,7 @@ def main(path):
         sys.exit("找不到 __objc_classlist —— 可能被加固剥离了 ObjC 元数据")
 
     # 一次扫完 classlist，收集两边要用的类（不引入第二个解析器）。
-    need = set(HOOK_MAP) | {h[0] for h in FEATURE_HOOKS}
+    need = set(HOOK_MAP) | {h[0] for h in FEATURE_HOOKS} | {h[0] for h in FEATURE_DEPS}
     classes = {}
     _va, size, foff = secmap["__objc_classlist"]
     for i in range(size // 8):
@@ -265,9 +297,29 @@ def main(path):
         print(f"{kind}{cls}  {sel}")
         print(f"{'':<2}{'OK' if ok else '不一致':<6} 期望 {enc} 实际 {actual}")
 
+    # feature hook 的依赖 accessor：只读校验，同样要求完整 encoding 一致。
+    print()
+    print("feature hook 依赖（安装前只读校验；hook 自己不发消息，依赖不符整条跳过）")
+    print("-" * 76)
+    for cls, kind, sel, enc in FEATURE_DEPS:
+        target = classes.get(cls)
+        if target is None:
+            actual = "类缺失"
+        else:
+            actual = own_methods(mm, vm2off, u32, u64, cstr,
+                                 u64(target) if kind == "+" else target).get(sel)
+            if actual is None:
+                actual = "不在本类自己的方法表"
+        ok = actual == enc
+        if not ok:
+            bad += 1
+        print(f"{kind}{cls}  {sel}")
+        print(f"{'':<2}{'OK' if ok else '不一致':<6} 期望 {enc} 实际 {actual}")
+
     print("-" * 76)
     total = sum(len(v) for v in HOOK_MAP.values())
-    print(f"{total} 个广告 selector + {len(FEATURE_HOOKS)} 个 feature hook，{bad} 个有问题")
+    print(f"{total} 个广告 selector + {len(FEATURE_HOOKS)} 个 feature hook"
+          f" + {len(FEATURE_DEPS)} 个依赖，{bad} 个有问题")
     return 1 if bad else 0
 
 

@@ -117,7 +117,9 @@ static BOOL BDEnabled(void)           { return BDNadPrefsActive(@"BDNadBlockEnab
 static BOOL BDDumpOnly(void)          { return BDNadPrefsActive(@"BDNadBlockDumpOnly"); }
 static BOOL BDRemoveRecommend(void)   { return BDNadPrefsActive(@"BDRemoveRecommend"); }
 static BOOL BDRemoveGameCenter(void)  { return BDNadPrefsActive(@"BDRemoveGameCenter"); }
+static BOOL BDRemoveJobNovel(void)    { return BDNadPrefsActive(@"BDRemoveJobNovel"); }
 static BOOL BDRemoveSearchPromo(void) { return BDNadPrefsActive(@"BDRemoveSearchPromo"); }
+static BOOL BDRemoveSearchAI(void)    { return BDNadPrefsActive(@"BDRemoveSearchAI"); }
 
 // 网络拦截总门：总开关 + 诊断 + 网络开关的组合，任一不满足就整层不拦。
 // matcher 最前查一次即可，不需要在里面重复判断总开关。
@@ -125,9 +127,17 @@ static BOOL BDBlockNetwork(void) {
     return BDEnabled() && !BDDumpOnly() && BDNadPrefsActive(@"BDNadBlockNetwork");
 }
 
-// 精准 feature hook（3 个：首页推荐/创意整块 + 我的页游戏中心）。
-// 放在开关之后 include：它依赖上面的 BDLog / BDEnabled / BDDumpOnly / BDRemove*。
+// 组件 include 顺序（依赖是单向的，别调换）：
+//   FeatureRemoval.h  提供 BDFRSpec / BDFRResolve / BDFRInstallSpec / BDFRSuppressed
+//   SettingsMenu.h    提供 BDPresentPurificationSettings（MenuEntry 的依赖）
+//   SearchDataRemoval.h / SearchViewRemoval.h  搜索框数据层与 UI 层清理
+//   MenuEntry.h       设置页入口按钮，依赖上面的菜单入口 + FeatureRemoval 的安装器
+// 全部只读同一份 active 快照，不各写各的默认值。
 #include "FeatureRemoval.h"
+#include "SettingsMenu.h"
+#include "SearchDataRemoval.h"
+#include "SearchViewRemoval.h"
+#include "MenuEntry.h"
 
 #pragma mark - 网络拦截规则
 
@@ -379,6 +389,13 @@ static void BDBoot(void) {
            "master=%d dumpOnly=%d network=%d adMethods=%d recommend=%d searchPromo=%d gameCenter=%d",
           BDEnabled(), BDDumpOnly(), BDBlockNetwork(), BDNadPrefsActive(@"BDNadBlockAdMethods"),
           BDRemoveRecommend(), BDRemoveSearchPromo(), BDRemoveGameCenter());
+    // 规格表里每个键的启动快照值：默认值只从 Preferences.h 的表里取，这里不重抄；
+    // 只打本组件的 fixed key，不碰账号/缓存/其它偏好。
+    for (NSUInteger i = 0; i < BDNadPrefsSpecCount; i++)
+        BDLog(@"[BDNadBlock] active %s = %d", BDNadPrefsSpecs[i].key,
+              BDNadPrefsActive(@(BDNadPrefsSpecs[i].key)));
+    BDLog(@"[BDNadBlock] 下面各组件的 installed / hit 只表示本进程装上并命中过，"
+           "不等于真机效果已验证（效果要看抓包与页面）");
     NSDictionary *map = BDHookMap();
     unsigned dumped = 0, missing = 0;
 
@@ -413,10 +430,14 @@ static void BDNadBlockInit(void) {
     // 第一件事：同步建启动快照（dispatch_once）。之后所有 active 读取都走它，
     // 所以后面 BDFRInstallAll / BDSetupNetwork 看到的开关值与日志一致。
     BDNadPrefsInit();
-    BDLog(@"[BDNadBlock] loaded (network + recommend/game-center removal); 启动快照已建立，菜单改动只影响下次冷启动");
-    // 精准 feature hook 在这里同步装完（不走下面的 1.5s / 3s 定时器）。
+    BDLog(@"[BDNadBlock] loaded (purification-menu: feature hooks + search + menu entry + network); "
+           "启动快照已建立，菜单改动只影响下次冷启动");
+    // 精准 feature hook 与搜索/入口 hook 都在这里同步装完（不走下面的 1.5s / 3s 定时器）。
     // 只有冷启动、且这里发生在页面组装之前才生效；真机以 [BDNadFeature] installed 日志为准。
     BDFRInstallAll();
+    BDSRInstallData();   // -[BDPanSearchManager setStaticWordList:] 清搜索框轮播词
+    BDSRInstallView();    // BDPanNewMSHSearchView 三条 post-hook（整组校验，不过就三条都不装）
+    BDMEInstallAll();     // 设置页导航条「网盘净化」按钮：入口照装，不受总开关/诊断影响
     BDSetupNetwork();
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ BDBoot(); });

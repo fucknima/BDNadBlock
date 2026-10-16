@@ -44,21 +44,27 @@ jobs:
             -framework Foundation -o "$bin" tests/network_rules_test.mm
           "$bin"
 
-      # SettingsMenu.h 还没 include 进 Tweak.xm（菜单入口未接），这里补一次编译检查。
-      # 不再把 header 当完整 TU 直接编（那样 static inline 入口没人调，-Werror 必报 unused-function）；
-      # 改成从 stdin 编一个最小调用 TU：只在静态调用里验证入口的真实签名。
-      # 仅 -fsyntax-only：不运行、不产出 app、不启模拟器、不建工程，也不是 UI 测试。
-      - name: Compile UIKit settings menu (syntax only, not runtime)
+      # SearchDataRemoval.h 的数据层机制测试（动态 fake 类 + 真实同名 selector）。
+      # 这不是真机测试：只证明清空/透传/幂等/签名不符不 attach，不证明搜索框真实布局。
+      - name: Host test (SearchDataRemoval.h, clang++, not a device test)
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/search_data_test"
+          clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
+            -framework Foundation -o "$bin" tests/search_data_test.mm
+          "$bin"
+
+      # UIKit 组件的编译检查：SettingsMenu / FeatureRemoval / SearchDataRemoval /
+      # SearchViewRemoval / MenuEntry 五个产品 header，用真实 iOS SDK 过一遍 -Werror，
+      # 并由 tests/ui_compile.mm 里的最小调用 TU 把每个入口都引用到（不靠 -Wno、不删函数）。
+      # 仅 -fsyntax-only：不运行、不产出 app、不启模拟器、不建工程，不是 UI 运行测试。
+      - name: Compile UIKit components (syntax only, not runtime)
         run: |
           set -euo pipefail
           sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
           xcrun --sdk iphoneos clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
-            -target arm64-apple-ios15.0 -isysroot "$sdk" -I . -x objective-c++ -fsyntax-only - <<'EOF'
-          #import "SettingsMenu.h"
-          void BDNadMenuCompileCheck(UIViewController *host, NSURL *url) {
-              BDPresentPurificationSettings(host, url);
-          }
-          EOF
+            -target arm64-apple-ios15.0 -isysroot "$sdk" -I . -x objective-c++ \
+            -fsyntax-only tests/ui_compile.mm
 
       # 不用 install-theos 脚本：它会打 api.github.com，CI 上容易被限流返回 exit 8
       - name: Install Theos + deps
