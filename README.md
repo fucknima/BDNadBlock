@@ -129,7 +129,10 @@ bcebos 的 `cmpkg` 整目录（里面还有 `1_swan-core` 小程序运行时）�
 - 闸门位置在建窗之前：原生的 not-show 分支自己会 `setIsNotSplashWindow` / `setDecidedNotShow` 并返回 NO，
   不进入 `dynamicAdvertiseTaskWithLaunchType:`，本组件不补任何收尾。
 
-**代码已接线并带 host 机制测试，但症状是否消失仍待本提交的 CI 与真机验证；这里不宣称已经修好。**
+**该提交（`e91f4e6`）的 9 组 Foundation 机制测试（含本项）、UIKit strict syntax 编译与
+arm64 / arm64e 双架构构建均已通过：
+<https://github.com/fucknima/BDNadBlock/actions/runs/38863989849>；
+真机上「空白开屏是否消失」仍未验证。**
 机制测试只覆盖开关组合、参数透传、原实现调用次数与安装失败路径，不代表设备上的空白开屏已不再出现。
 
 ## 怎么复核
