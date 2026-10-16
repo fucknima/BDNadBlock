@@ -1,7 +1,7 @@
 # BDNadBlock
 
-百度网盘 (com.baidu.netdisk) **13.32.2** 的净化 tweak：一个设置菜单 + **18 个保留配置键**
-（17 个可切换项 + 1 个「年卡待定位」的说明行）。菜单之下挂两层广告拦截
+百度网盘 (com.baidu.netdisk) **13.32.2** 的净化 tweak：一个设置菜单 + **19 个保留配置键**
+（18 个可切换项 + 1 个「年卡待定位」的说明行）。菜单之下挂两层广告拦截
 （网络规则 / 展示方法）和若干「原生组装或纯显示谓词」处的精准 hook。
 
 **实验版本。** 编译通过、selector 存在、hook 装上，都**不等于**真机生效。日志里两条也不同：
@@ -25,8 +25,8 @@
 
 ## 开关
 
-**唯一默认值表在 `Preferences.h`**（18 个保留配置键），菜单标题/分组也从那张表取，代码里不再抄第二份。
-只写本组件这 18 个键到 `NSUserDefaults`，不写账号、缓存或原生偏好。
+**唯一默认值表在 `Preferences.h`**（19 个保留配置键），菜单标题/分组也从那张表取，代码里不再抄第二份。
+只写本组件这 19 个键到 `NSUserDefaults`，不写账号、缓存或原生偏好。
 
 **保存后必须彻底退出 App 再冷启动才生效**：运行期所有 hook 读的是**进程启动快照**，
 菜单改值不改当前进程、不热改 UIKit、不自动退出、不清网盘数据。
@@ -40,6 +40,7 @@
 | `BDRemoveJobNovel` | 隐藏求职/小说入口 | YES | 已实现 |
 | `BDRemoveSearchPromo` | 隐藏搜索推广词 | YES | 已实现 |
 | `BDRemoveSearchAI` | 隐藏搜索框AI按钮 | YES | 已实现 |
+| `BDExperimentHideHomeBanner` | 隐藏顶部横幅容器·实验 | **NO** | **实验（默认关闭）**，见下方实验说明；与 `BDRemoveHomePromo` 是两回事 |
 | `BDRemoveGameCenter` | 隐藏游戏中心 | YES | 已实现 |
 | `BDRemovePersonalPromotions` | 隐藏推广入口整排 | YES | 已接线（基线 CI 通过） |
 | `BDRemovePersonalBanner` | 隐藏活动轮播 | YES | 已实现 |
@@ -66,6 +67,7 @@
 | 求职/小说 | `+[BDPanFeedHomeConfig cacheKingKongsConfigArray]` → 只从**最终模型数组**里去掉 `kingKongId` 13（求职）/ 6（小说） | 其余元素保序、同对象原样透传，**不拦 `/feed/kingkongdistrict` 这个接口**；相册/视频/扫描/备份/容量/最近等**全部保留** |
 | 搜索推广词 | 数据层 `-[BDPanSearchManager setStaticWordList:]`（`_staticWordList` 唯一写入口）传空数组；UI 层 `BDPanNewMSHSearchView` 三条 post-hook（`setupView` / `searchPlaceholderUpdated:` / `updateConstraintsWithProgress:`）走原实现的清空路径，并用 `SearchPlaceholder` 本地化 key 恢复普通占位文案 | **全部轮播词都去掉**（用户选定），不做分类/文本匹配；不清用户输入、不动搜索历史、不碰轮播词落盘 |
 | 搜索框 AI | 隐藏 `genflowButton` / `genflowAnimationView` / `cameraButton` / `cameraButtonAnimateBackground` 四个真实视图，并把 `searchButton.contentEdgeInsets` 收回 `(0, 8, 0, 12)` | 不改任何约束/frame，无延时重试；留白视觉效果待真机确认 |
+| 首页顶部横幅容器·**实验** | 只对 `BDPanNewMSHTopOperationView` **自己的候选 `_bannerView`** 定点 `setHidden:YES`（原 `setup` 先调一次） | **默认关闭**；**尚未定位首页年卡**（目标 identity 未证），可能无效、可能留白；不写死任何地址/坐标/尺寸，不全局 hook `UIView`，不隐藏整个 TopOperation，不改父容器/约束/数据/网络 |
 | 底部 AI tab | `-[BDPanTabBarController setTabBarItemModels:]` 过滤**只有 `itemTabName == @"shenji_page"`** 的那条 + `customTabBar` 上下文 + 四个索引 getter 换算（`friendsIndex`/`magicTrickIndex`/`findSourceIndex`/`settingIndex`） | 六条 hook + 两个只读依赖全部校验通过才整组 attach；数组会被滤空时整次不滤。**可见模型过滤并同步索引，需真机测试登录 / 退出 / 企业空间切换** |
 | 我的·游戏中心 | `+[BDPanPersonalConfig gameCenterSwitch]` → NO | 组装闸门：只阻止新建区块，不负责删除已显示区块 |
 | 我的·活动轮播 | `+[BDPanPersonalConfig bannerSwitch]` → NO | 该开关为 NO 时原生就不建整个 banner section |
@@ -90,6 +92,23 @@
 菜单里那一行只有说明文案、没有开关，也不读写它的 saved 值，避免显示成「默认 YES 已生效」。
 规格表里那个默认 YES 只是**保留配置**，启动日志里的 `active BDRemoveHomePromo = 1`
 同样只是快照值，**不是该功能已接线的证据**。
+
+### 实验：隐藏顶部横幅容器（`BDExperimentHideHomeBanner`，默认关闭）
+
+用户要求「先移除了装上试试」，所以这一项做成**独立、可回退的实验开关**，和上面那个待定位的
+`BDRemoveHomePromo` 是两件事：
+
+- **怎么开**：网盘「我的 → 设置 → 网盘净化」里打开 **「隐藏顶部横幅容器·实验」**，
+  然后**彻底退出后台再重开**网盘（运行期只读进程启动快照，不热改本进程）。
+- **怎么回退**：把开关关掉后冷启动即可；或者直接装回上一版库（本组件不自动杀 App、不做热恢复）。
+- **范围**：只对 `BDPanNewMSHTopOperationView` 自己的**候选 `_bannerView`** 定点 `setHidden:YES`，
+  原 `setup` 先调一次；**不是**全局 `UIView` hook，也**不隐藏整个 TopOperation**，
+  不动父容器 / 约束 / 数据 / 网络。
+- **状态：实验接线中，待机制 / SDK / 真机验证。** 目标 identity **尚未证实**，所以
+  可能**完全无效**，也可能把不该藏的东西藏掉、或留下空白；「若候选里含搜索框 / 上传加号 /
+  传输 / 签到 / 状态动画等正常控件就保留」这类运行时守卫由产品侧实现，
+  **本文件不预写它已验证**。
+- **不要把它当作已定位成功**：它不改变「首页年卡促销（`BDRemoveHomePromo`）仍未实施」这条结论。
 
 ## 网络层（`BDNadBlockNetwork`，实验）
 
@@ -176,13 +195,14 @@ App 升级后必须重跑 `verify_selectors.py`：selector 失效会直接报出
 
 **CI**：`gh workflow run Build --ref <branch>`（或 Actions 页手动 dispatch）。它跑上面那些
 host 测试、UIKit `-fsyntax-only` 编译、再用 Theos 出 dylib；只有 `main` 分支产出可下载 artifact。
-**已发布基线**是 `main` 的 `7e4d8e92`：**10 组 Foundation 机制测试（含传输页真值表矩阵）、UIKit strict
-syntax 与 arm64 / arm64e 双架构构建均已通过**（CI run `38888673604`）——
-那一版只含一刻相册 + 下载小游戏引导两项，**不含免流办卡开关**。
-免流办卡补丁（新增 `BDRemoveTransferCardPromo` 与它的 widget gate）在提交 `1e869d5` 的
-[CI 38890609380](https://github.com/fucknima/BDNadBlock/actions/runs/38890609380) 中已通过
+**已发布基线**是 `main` 的 `664a722`（CI run `38891349121`）：含 10 组 Foundation 机制测试、
+UIKit strict syntax 与 arm64 / arm64e 双架构构建；此前 `7e4d8e92`（run `38888673604`）
+只含一刻相册 + 下载小游戏两项，免流办卡补丁在 `1e869d5` 的
+[CI 38890609380](https://github.com/fucknima/BDNadBlock/actions/runs/38890609380) 中通过
 10 组机制测试（含 48 组 bool 与 64 组办卡数值组合）、UIKit 严格编译及双架构构建。
-验证分支没有可下载 artifact，等 `main` 成功才发布；**真机办卡条效果仍未验证**。
+本次首页顶部横幅容器实验（新增 `BDExperimentHideHomeBanner` + 第 11 组 host 测试）**尚未跑过 CI**：
+这里不预告结果、不写下载链接，验证分支也没有可下载 artifact，等 `main` 成功才发布；
+**该实验的真机效果同样未验证**。
 这些都只是**编译与机制**层面的证据：**真机效果未验，编译与机制测试都不等于真机生效。**
 
 ## 防崩

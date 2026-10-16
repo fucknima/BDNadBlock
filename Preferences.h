@@ -50,6 +50,8 @@ static const BDNadPrefsSpec BDNadPrefsSpecs[] = {
     {"BDRemoveJobNovel",           "隐藏求职/小说入口",      YES, BDNadPrefsGroupHome},
     {"BDRemoveSearchPromo",        "隐藏搜索推广词",         YES, BDNadPrefsGroupHome},
     {"BDRemoveSearchAI",           "隐藏搜索框AI按钮",       YES, BDNadPrefsGroupHome},
+    // 实验项：默认关闭，独立 key，不动 HomePromo 那行说明（年卡仍未定位）
+    {"BDExperimentHideHomeBanner", "隐藏顶部横幅容器·实验",   NO,  BDNadPrefsGroupHome},
     // 我的
     {"BDRemoveGameCenter",         "隐藏游戏中心",           YES, BDNadPrefsGroupPersonal},
     {"BDRemovePersonalPromotions", "隐藏推广入口整排",       YES, BDNadPrefsGroupPersonal},
