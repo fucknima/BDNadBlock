@@ -45,12 +45,11 @@ static const BDNadPrefsSpec BDNadPrefsSpecs[] = {
     {"BDNadBlockEnabled",          "启用网盘净化",           YES, BDNadPrefsGroupMaster},
     // 首页
     {"BDRemoveRecommend",          "隐藏推荐/创意区域",      YES, BDNadPrefsGroupHome},
-    {"BDRemoveHomePromo",          "隐藏首页年卡促销",       YES, BDNadPrefsGroupHome},
     {"BDRemoveAITab",              "隐藏底部库库AI",         YES, BDNadPrefsGroupHome},
     {"BDRemoveJobNovel",           "隐藏求职/小说入口",      YES, BDNadPrefsGroupHome},
     {"BDRemoveSearchPromo",        "隐藏搜索推广词",         YES, BDNadPrefsGroupHome},
     {"BDRemoveSearchAI",           "隐藏搜索框AI按钮",       YES, BDNadPrefsGroupHome},
-    // 实验项：默认关闭，独立 key，不动 HomePromo 那行说明（年卡仍未定位）
+    // 实验项：默认关闭，独立 key
     {"BDExperimentHideHomeBanner", "隐藏顶部横幅容器·实验",   NO,  BDNadPrefsGroupHome},
     // 我的
     {"BDRemoveGameCenter",         "隐藏游戏中心",           YES, BDNadPrefsGroupPersonal},
@@ -65,6 +64,9 @@ static const BDNadPrefsSpec BDNadPrefsSpecs[] = {
     {"BDRemoveTransferYikePromo",  "隐藏传输页一刻相册",     YES, BDNadPrefsGroupAds},
     {"BDRemoveTransferGamePromo",  "隐藏下载小游戏引导",     YES, BDNadPrefsGroupAds},
     {"BDRemoveTransferCardPromo",  "隐藏免流办卡推广",       YES, BDNadPrefsGroupAds},
+    // 传输/下载页底部 widget 的另外两条：数据包(流量包)付费引导、加速试用商品引导
+    {"BDRemoveTransferDataPromo",  "隐藏流量包付费引导",     YES, BDNadPrefsGroupAds},
+    {"BDRemoveTransferTrialPromo", "隐藏加速试用促销",       YES, BDNadPrefsGroupAds},
     // 诊断
     {"BDNadBlockDumpOnly",         "仅诊断，不执行净化",     NO,  BDNadPrefsGroupDiagnostics},
 };

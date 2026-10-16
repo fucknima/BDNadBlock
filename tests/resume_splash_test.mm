@@ -9,6 +9,9 @@
 //   - 只有 总开关&&!诊断&&广告方法开关 && launchType∈{0,2,3} && 原结果为 true 才否决成 false；
 //   - 其它 launchType（1/负值/未知正值）、任一开关关、原结果 false 一律精确透传原 bool；
 //   - 5 个参数原样传递（含 nil），receiver 与 _cmd 准确；
+//   - App Open 两条策略闸门（BDPanAdvertisementStrategy 实例方法，B24@0:8@16 / B24@0:8q16，argc 3）同规则：
+//     冷那条无枚举；热那条只纳入 from ∈ {1,2,3,4}，0 / 负值 / 未知值（含 NSIntegerMax）一律透传原 bool；
+//     实参 identity 保真（含 nil）；两条各有独立 orig 槽与独立 hit token，互不影响，也不动开屏那条；
 //   - 重复安装不动 IMP、orig 不自指、不递归；
 //   - 独立 phantom 描述覆盖 类缺失 / encoding 不符 / argc 不符 / 只有父类实现 四种不装路径。
 //
@@ -119,12 +122,57 @@ static bool PhNeedShow(id self, SEL _cmd, NSInteger launchType, id url, id optio
 static Class gManageCls;    // 假 BDNCUIAdvertisesManage
 static id gManageHost;      // 真实实例：调用时的 receiver
 
+// ---- App Open 两条策略闸门的替身（同一个假类上的两个实例方法槽）----
+
+static SEL gColdSel;    // -isEnableShowAdForAppColdOpenWithLaunchoptions:
+static SEL gHotSel;     // -isEnableShowAdForAppHotOpenWithFrom:
+
+static unsigned gColdCalls = 0;
+static id gColdSeenSelf = nil;
+static SEL gColdSeenCmd = NULL;
+static id gColdSeenOptions = nil;
+static bool gColdOriginalResult = true;
+
+static unsigned gHotCalls = 0;
+static id gHotSeenSelf = nil;
+static SEL gHotSeenCmd = NULL;
+static long long gHotSeenFrom = -999;      // 用 64 位存：NSIntegerMax 也要能原样比对
+static bool gHotOriginalResult = true;
+
+static bool PhColdGate(id self, SEL _cmd, id launchOptions) {
+    gColdCalls++;
+    gColdSeenSelf = self;
+    gColdSeenCmd = _cmd;
+    gColdSeenOptions = launchOptions;
+    return gColdOriginalResult;
+}
+
+static bool PhHotGate(id self, SEL _cmd, NSInteger from) {
+    gHotCalls++;
+    gHotSeenSelf = self;
+    gHotSeenCmd = _cmd;
+    gHotSeenFrom = (long long)from;
+    return gHotOriginalResult;
+}
+
+static Class gStrategyCls;  // 假 BDPanAdvertisementStrategy
+static id gStrategyHost;    // 真实实例
+
 static void setup_hosts(void) {
     gGateSel = sel_registerName("needToShowSplashWithLaunchType:launchUrl:launchOptions:");
     gManageCls = BDRSMakeClass("BDNCUIAdvertisesManage", Nil);
     CHECK(class_addMethod(gManageCls, gGateSel, (IMP)PhNeedShow, "B40@0:8q16@24@32"));
     gManageHost = [[gManageCls alloc] init];
     CHECK(gManageHost != nil);
+
+    // 三条 spec 的真实槽：先注册类与自有方法，再走安装（少造脚手架）。
+    gColdSel = sel_registerName("isEnableShowAdForAppColdOpenWithLaunchoptions:");
+    gHotSel = sel_registerName("isEnableShowAdForAppHotOpenWithFrom:");
+    gStrategyCls = BDRSMakeClass("BDPanAdvertisementStrategy", Nil);
+    CHECK(class_addMethod(gStrategyCls, gColdSel, (IMP)PhColdGate, "B24@0:8@16"));
+    CHECK(class_addMethod(gStrategyCls, gHotSel, (IMP)PhHotGate, "B24@0:8q16"));
+    gStrategyHost = [[gStrategyCls alloc] init];
+    CHECK(gStrategyHost != nil);
 }
 
 // 每次发调用的统一入口：断言原实现严格 +1，并回传它这次的返回原值。
@@ -136,12 +184,43 @@ static bool SendAndCount(id host, NSInteger launchType, id url, id options) {
     return got;
 }
 
+static bool BDRSSendColdGate(id host, id options) {
+    bool (*imp)(id, SEL, id) =
+        (bool (*)(id, SEL, id))class_getMethodImplementation(object_getClass(host), gColdSel);
+    return imp(host, gColdSel, options);
+}
+
+static bool BDRSSendHotGate(id host, NSInteger from) {
+    bool (*imp)(id, SEL, NSInteger) =
+        (bool (*)(id, SEL, NSInteger))class_getMethodImplementation(object_getClass(host), gHotSel);
+    return imp(host, gHotSel, from);
+}
+
+static bool SendColdAndCount(id host, id options) {
+    unsigned before = gColdCalls;
+    bool got = BDRSSendColdGate(host, options);
+    CHECK(gColdCalls == before + 1);
+    return got;
+}
+
+static bool SendHotAndCount(id host, NSInteger from) {
+    unsigned before = gHotCalls;
+    bool got = BDRSSendHotGate(host, from);
+    CHECK(gHotCalls == before + 1);
+    return got;
+}
+
 #pragma mark - 测试
 
 // 安装前：槽是空的，调用直接落到原实现。
 static void test_before_install(void) {
     CHECK(BDFRSpecResumeSplashGate.installed == NO);
     CHECK(BDFROrigResumeSplashGate == NULL);
+    CHECK(BDFRSpecAppColdOpenGate.installed == NO);
+    CHECK(BDFRSpecAppHotOpenGate.installed == NO);
+    CHECK(BDFROrigAppColdOpenGate == NULL);
+    CHECK(BDFROrigAppHotOpenGate == NULL);
+
     gCalls = 0;
     gOriginalResult = true;
     CHECK(BDRSSendGate(gManageHost, 3, nil, nil) == true);   // 没有 hook：原样
@@ -149,9 +228,25 @@ static void test_before_install(void) {
     CHECK(gSeenSelf == gManageHost);
     CHECK(gSeenCmd == gGateSel);
     CHECK(gSeenType == 3);
+
+    gColdCalls = 0;
+    gColdOriginalResult = true;
+    CHECK(BDRSSendColdGate(gStrategyHost, nil) == true);
+    CHECK(gColdCalls == 1);
+    CHECK(gColdSeenSelf == gStrategyHost);
+    CHECK(gColdSeenCmd == gColdSel);
+    CHECK(gColdSeenOptions == nil);
+
+    gHotCalls = 0;
+    gHotOriginalResult = true;
+    CHECK(BDRSSendHotGate(gStrategyHost, 4) == true);
+    CHECK(gHotCalls == 1);
+    CHECK(gHotSeenSelf == gStrategyHost);
+    CHECK(gHotSeenCmd == gHotSel);
+    CHECK(gHotSeenFrom == 4);
 }
 
-// 安装：挂上 hook，orig 槽指向真实原实现（不是 hook 自己）。
+// 安装：挂上三条 hook，orig 槽都指向真实原实现（不是 hook 自己）。
 static void test_install(void) {
     unsigned logsBefore = gLogLines;
     BDRSInstallAll();
@@ -160,8 +255,24 @@ static void test_install(void) {
     CHECK(BDFROrigResumeSplashGate != (IMP)BDRSNeedShowSplash);   // orig 不自指
     CHECK(class_getMethodImplementation(object_getClass(gManageHost), gGateSel)
           == (IMP)BDRSNeedShowSplash);
-    CHECK(gLogLines == logsBefore + 1);      // 只有 installed 一行
-    CHECK(gCalls == 1);                      // 安装过程不调用原实现
+
+    // App Open 两条：各自独立装上，orig 槽分别指到自己的原实现，不串槽。
+    CHECK(BDFRSpecAppColdOpenGate.installed == YES);
+    CHECK(BDFRSpecAppHotOpenGate.installed == YES);
+    CHECK(BDFROrigAppColdOpenGate == (IMP)PhColdGate);
+    CHECK(BDFROrigAppHotOpenGate == (IMP)PhHotGate);
+    CHECK(BDFROrigAppColdOpenGate != (IMP)BDRSAppColdOpenGate);
+    CHECK(BDFROrigAppHotOpenGate != (IMP)BDRSAppHotOpenGate);
+    CHECK(BDFROrigAppColdOpenGate != BDFROrigAppHotOpenGate);      // 两个 slot 各归各
+    CHECK(class_getMethodImplementation(object_getClass(gStrategyHost), gColdSel)
+          == (IMP)BDRSAppColdOpenGate);
+    CHECK(class_getMethodImplementation(object_getClass(gStrategyHost), gHotSel)
+          == (IMP)BDRSAppHotOpenGate);
+
+    CHECK(gLogLines == logsBefore + 3);      // 三条 spec 各一行 installed
+    CHECK(gCalls == 1);                      // 安装过程不调用任何原实现
+    CHECK(gColdCalls == 1);
+    CHECK(gHotCalls == 1);
 }
 
 // 开关都开着，但这些情况**都不该**是「真正否决」，一行 hit 都不能多。
@@ -312,23 +423,198 @@ static void test_gate_matrix(void) {
     gEnabled = YES; gDumpOnly = NO; gAdMethods = YES; gOriginalResult = true;
 }
 
+// ── App Open 两条策略闸门 ───────────────────────────────────────────────
+// 顺序刻意如此：先「不该否决」的全部情形（原 false / 开关关 / 未知 from），确认一行 hit 都不多，
+// 再真否决，最后才是矩阵（token 已消耗，只验规格与无新日志）。
+
+// 开关都开着，但这些情况**都不该**是「真正否决」。
+static void test_appopen_no_false_hit(void) {
+    gEnabled = YES; gDumpOnly = NO; gAdMethods = YES;
+    unsigned logsBefore = gLogLines;
+    NSDictionary *opts = @{@"UIApplicationLaunchOptionsURLKey": @"bdnetdisk://x"};
+
+    // 原结果 false：原生本来就不展示（含 iPad / inactive / 服务端关掉等既有分支），一律原样 false。
+    gColdOriginalResult = false;
+    CHECK(SendColdAndCount(gStrategyHost, nil) == false);
+    CHECK(SendColdAndCount(gStrategyHost, opts) == false);
+    gHotOriginalResult = false;
+    for (NSInteger f = 0; f <= 7; f++) CHECK(SendHotAndCount(gStrategyHost, f) == false);
+
+    // 热 from 未知：0 / 负值 / 7 / 极值都不当热启动，无论原结果真假都透传。
+    gHotOriginalResult = true;
+    CHECK(SendHotAndCount(gStrategyHost, 0) == true);
+    CHECK(SendHotAndCount(gStrategyHost, -1) == true);
+    CHECK(SendHotAndCount(gStrategyHost, 7) == true);
+    CHECK(SendHotAndCount(gStrategyHost, NSIntegerMax) == true);
+    CHECK(SendHotAndCount(gStrategyHost, NSIntegerMin) == true);
+
+    // 三个开关各自关掉：冷（无枚举）与热（1..4）都必须透传原 true。
+    gColdOriginalResult = true;
+    gHotOriginalResult = true;
+    gEnabled = NO;
+    CHECK(SendColdAndCount(gStrategyHost, nil) == true);
+    for (NSInteger f = 1; f <= 4; f++) CHECK(SendHotAndCount(gStrategyHost, f) == true);
+    gEnabled = YES;
+    gDumpOnly = YES;
+    CHECK(SendColdAndCount(gStrategyHost, opts) == true);
+    for (NSInteger f = 1; f <= 4; f++) CHECK(SendHotAndCount(gStrategyHost, f) == true);
+    gDumpOnly = NO;
+    gAdMethods = NO;
+    CHECK(SendColdAndCount(gStrategyHost, nil) == true);
+    for (NSInteger f = 1; f <= 4; f++) CHECK(SendHotAndCount(gStrategyHost, f) == true);
+    gAdMethods = YES;
+
+    CHECK(gLogLines == logsBefore);          // 以上两条 gate 一次真 hit 都没有
+}
+
+// 冷那条真否决：原 true + 三开关全开；实参（nil 与字典）identity 保真，只首次记一行。
+static void test_appopen_cold_veto_identity(void) {
+    unsigned logsBefore = gLogLines;
+    gEnabled = YES; gDumpOnly = NO; gAdMethods = YES;
+    gColdOriginalResult = true;
+
+    gColdSeenSelf = nil; gColdSeenCmd = NULL; gColdSeenOptions = (id)@"sentinel";
+    CHECK(SendColdAndCount(gStrategyHost, nil) == false);      // 冷 + nil：不造默认对象
+    CHECK(gColdSeenSelf == gStrategyHost);
+    CHECK(gColdSeenCmd == gColdSel);
+    CHECK(gColdSeenOptions == nil);
+    CHECK(gLogLines == logsBefore + 1);                        // 首次真正 hit，恰好一行
+    CHECK(SendColdAndCount(gStrategyHost, nil) == false);      // 重复仍否决
+    CHECK(gLogLines == logsBefore + 1);                        // dispatch_once 不再重复
+
+    NSDictionary *opts = @{@"UIApplicationLaunchOptionsSourceApplicationKey": @"com.tencent.xin"};
+    gColdSeenSelf = nil; gColdSeenCmd = NULL; gColdSeenOptions = nil;
+    CHECK(SendColdAndCount(gStrategyHost, opts) == false);     // 冷 + 字典：identity 精确
+    CHECK(gColdSeenSelf == gStrategyHost);
+    CHECK(gColdSeenCmd == gColdSel);
+    CHECK(gColdSeenOptions == opts);
+    CHECK(gLogLines == logsBefore + 1);
+
+    gColdOriginalResult = false;                               // 原 false：原值透传，不假记 hit
+    CHECK(SendColdAndCount(gStrategyHost, opts) == false);
+    CHECK(gColdSeenOptions == opts);
+    CHECK(gLogLines == logsBefore + 1);
+    gColdOriginalResult = true;
+
+    CHECK(BDFRSpecResumeSplashGate.installed == YES);          // 冷这条否决不牵连另外两条
+    CHECK(BDFROrigAppHotOpenGate == (IMP)PhHotGate);
+}
+
+// 热那条真否决：只认 from 1/2/3/4（两版 keyForAppHotOpenWithFrom: 字面量表一致），首次一行。
+static void test_appopen_hot_veto_enum(void) {
+    unsigned logsBefore = gLogLines;
+    gEnabled = YES; gDumpOnly = NO; gAdMethods = YES;
+    gHotOriginalResult = true;
+
+    const NSInteger known[] = {1, 2, 3, 4};
+    for (unsigned i = 0; i < 4; i++) {
+        gHotSeenSelf = nil; gHotSeenCmd = NULL; gHotSeenFrom = -999;
+        CHECK(SendHotAndCount(gStrategyHost, known[i]) == false);
+        CHECK(gHotSeenSelf == gStrategyHost);                  // receiver / _cmd / from 原样到原实现
+        CHECK(gHotSeenCmd == gHotSel);
+        CHECK(gHotSeenFrom == (long long)known[i]);
+        CHECK(gLogLines == logsBefore + 1);                    // 只有 from=1 那次记一行
+    }
+    CHECK(SendHotAndCount(gStrategyHost, 4) == false);
+    CHECK(gLogLines == logsBefore + 1);
+
+    // 已证枚举之外：一律透传原 bool，不消耗 hit、不改值（含极端值）
+    CHECK(SendHotAndCount(gStrategyHost, 0) == true);
+    CHECK(SendHotAndCount(gStrategyHost, -1) == true);
+    CHECK(SendHotAndCount(gStrategyHost, 5) == true);          // 未来新增的下一枚枚举：现在不动
+    CHECK(SendHotAndCount(gStrategyHost, 99) == true);
+    gHotSeenFrom = -999;
+    CHECK(SendHotAndCount(gStrategyHost, NSIntegerMax) == true);
+    CHECK(gHotSeenFrom == (long long)NSIntegerMax);
+    gHotOriginalResult = false;
+    CHECK(SendHotAndCount(gStrategyHost, 1) == false);         // 枚举内但原 false：透传
+    CHECK(gLogLines == logsBefore + 1);
+    gHotOriginalResult = true;
+
+    CHECK(BDFRSpecResumeSplashGate.installed == YES);
+    CHECK(BDFROrigAppColdOpenGate == (IMP)PhColdGate);
+}
+
+// 矩阵：冷 = 原 bool × 三开关（16 组）；热 = 原 bool × 三开关 × 8个 from（128组）。
+// 两条 token 都已消耗，所以这里全程不该再出现新日志。
+static void test_appopen_matrix(void) {
+    const BOOL bools[2] = {YES, NO};
+    const bool origs[2] = {true, false};
+    const NSInteger known[] = {1, 2, 3, 4};
+    const NSInteger unknown[] = {0, -1, 5, 99};
+    unsigned logsBefore = gLogLines;
+    unsigned checked = 0;
+
+    for (unsigned o = 0; o < 2; o++)
+    for (unsigned e = 0; e < 2; e++)
+    for (unsigned d = 0; d < 2; d++)
+    for (unsigned a = 0; a < 2; a++) {
+        gEnabled = bools[e]; gDumpOnly = bools[d]; gAdMethods = bools[a];
+        BOOL gate = bools[e] && !bools[d] && bools[a];
+
+        gColdOriginalResult = origs[o];
+        if (SendColdAndCount(gStrategyHost, nil) != (origs[o] && !gate)) {
+            fprintf(stderr, "FAIL %s:%d: cold (orig=%d enabled=%d dump=%d adMethods=%d)\n",
+                    __FILE__, __LINE__, origs[o], bools[e], bools[d], bools[a]);
+            gFailures++;
+        }
+        checked++;
+
+        gHotOriginalResult = origs[o];
+        for (unsigned k = 0; k < 4; k++) {
+            if (SendHotAndCount(gStrategyHost, known[k]) != (origs[o] && !gate)) {
+                fprintf(stderr, "FAIL %s:%d: hot known %ld (orig=%d enabled=%d dump=%d adMethods=%d)\n",
+                        __FILE__, __LINE__, (long)known[k], origs[o], bools[e], bools[d], bools[a]);
+                gFailures++;
+            }
+            checked++;
+        }
+        for (unsigned u = 0; u < 4; u++) {
+            if (SendHotAndCount(gStrategyHost, unknown[u]) != origs[o]) {
+                fprintf(stderr, "FAIL %s:%d: hot unknown %ld (orig=%d enabled=%d dump=%d adMethods=%d)\n",
+                        __FILE__, __LINE__, (long)unknown[u], origs[o], bools[e], bools[d], bools[a]);
+                gFailures++;
+            }
+            checked++;
+        }
+    }
+    CHECK(checked == 2 * 2 * 2 * 2 * 9);
+    CHECK(gLogLines == logsBefore);             // token 已消耗：一行都不该再多
+    gEnabled = YES; gDumpOnly = NO; gAdMethods = YES;
+    gColdOriginalResult = true; gHotOriginalResult = true;
+}
+
 // 重复安装：不动 IMP、orig 不自指、原实现仍然每次只跑一次（不递归）。
 static void test_idempotent_reinstall(void) {
     IMP before = class_getMethodImplementation(object_getClass(gManageHost), gGateSel);
+    IMP beforeCold = class_getMethodImplementation(object_getClass(gStrategyHost), gColdSel);
+    IMP beforeHot = class_getMethodImplementation(object_getClass(gStrategyHost), gHotSel);
     unsigned logsBefore = gLogLines;
     gEnabled = YES; gDumpOnly = NO; gAdMethods = YES;
     gOriginalResult = true;
+    gColdOriginalResult = true;
+    gHotOriginalResult = true;
 
     BDRSInstallAll();
     BDRSInstallAll();
     CHECK(BDFRSpecResumeSplashGate.installed == YES);
+    CHECK(BDFRSpecAppColdOpenGate.installed == YES);
+    CHECK(BDFRSpecAppHotOpenGate.installed == YES);
     CHECK(class_getMethodImplementation(object_getClass(gManageHost), gGateSel) == before);
+    CHECK(class_getMethodImplementation(object_getClass(gStrategyHost), gColdSel) == beforeCold);
+    CHECK(class_getMethodImplementation(object_getClass(gStrategyHost), gHotSel) == beforeHot);
     CHECK(BDFROrigResumeSplashGate == (IMP)PhNeedShow);              // 没被覆盖成 hook
     CHECK(BDFROrigResumeSplashGate != (IMP)BDRSNeedShowSplash);
-    CHECK(gLogLines == logsBefore + 2);        // 共享安装器对已装 spec 各打一行「already installed」
+    CHECK(BDFROrigAppColdOpenGate == (IMP)PhColdGate);               // 两条 App Open 各自没被动
+    CHECK(BDFROrigAppHotOpenGate == (IMP)PhHotGate);
+    CHECK(BDFROrigAppColdOpenGate != (IMP)BDRSAppColdOpenGate);
+    CHECK(BDFROrigAppHotOpenGate != (IMP)BDRSAppHotOpenGate);
+    CHECK(gLogLines == logsBefore + 6);      // 共享安装器对三条已装 spec 各打一行「already installed」×2 次
     CHECK(SendAndCount(gManageHost, 0, nil, nil) == false);          // 冷启动 0：转发正常，计数 +1 不递归
     CHECK(SendAndCount(gManageHost, 2, nil, nil) == false);          // 热启动 2 同样
-    CHECK(gLogLines == logsBefore + 2);                              // 重复安装不再产生 hit
+    CHECK(SendColdAndCount(gStrategyHost, nil) == false);            // App Open 冷：转发正常
+    CHECK(SendHotAndCount(gStrategyHost, 3) == false);               // App Open 热：转发正常
+    CHECK(gLogLines == logsBefore + 6);                              // 重复安装不再产生 hit
 }
 
 // 四种不装路径：都用独立 phantom 描述，不改已注册的 encoding、不重置真实 spec。
@@ -385,11 +671,38 @@ static void test_skip_paths(void) {
     CHECK(s4.installed == NO && origInherited == NULL);
     CHECK(class_getMethodImplementation(child, gGateSel) == (IMP)PhNeedShow);  // 父类槽没被动
 
-    // 以上任何一次失败都不许影响真实那条 spec
+    // 5) App Open 冷/热那两条走同一个解析器：控制组（enc/argc 都正确）能装，改 enc / 改 argc 就 skip。
+    CHECK(class_addMethod(host, gColdSel, (IMP)PhColdGate, "B24@0:8@16"));
+    CHECK(class_addMethod(host, gHotSel, (IMP)PhHotGate, "B24@0:8q16"));
+    IMP origColdOk = NULL, origHotOk = NULL;
+    BDFRSpec c0 = BDRSTestSpec("BDRSPhantomHost", "isEnableShowAdForAppColdOpenWithLaunchoptions:", NO,
+                               "B24@0:8@16", 3, (IMP)BDRSAppColdOpenGate, &origColdOk, "t-cold-ok");
+    BDFRSpec h0 = BDRSTestSpec("BDRSPhantomHost", "isEnableShowAdForAppHotOpenWithFrom:", NO,
+                               "B24@0:8q16", 3, (IMP)BDRSAppHotOpenGate, &origHotOk, "t-hot-ok");
+    CHECK(BDFRInstallSpec(&c0) == YES && c0.installed == YES && origColdOk == (IMP)PhColdGate);
+    CHECK(BDFRInstallSpec(&h0) == YES && h0.installed == YES && origHotOk == (IMP)PhHotGate);
+
+    IMP origColdEnc = NULL, origHotArgc = NULL;
+    BDFRSpec c1 = BDRSTestSpec("BDRSPhantomHost", "isEnableShowAdForAppColdOpenWithLaunchoptions:", NO,
+                               "B24@0:8q16", 3, (IMP)BDRSAppColdOpenGate, &origColdEnc, "t-cold-wrong-enc");
+    BDFRSpec h1 = BDRSTestSpec("BDRSPhantomHost", "isEnableShowAdForAppHotOpenWithFrom:", NO,
+                               "B24@0:8q16", 2, (IMP)BDRSAppHotOpenGate, &origHotArgc, "t-hot-wrong-argc");
+    CHECK(BDFRInstallSpec(&c1) == NO && c1.installed == NO && origColdEnc == NULL);
+    CHECK(BDFRInstallSpec(&h1) == NO && h1.installed == NO && origHotArgc == NULL);
+
+    // 以上任何一次失败都不许影响真实那三条 spec
     CHECK(BDFRSpecResumeSplashGate.installed == YES);
     CHECK(BDFROrigResumeSplashGate == (IMP)PhNeedShow);
     CHECK(class_getMethodImplementation(object_getClass(gManageHost), gGateSel)
           == (IMP)BDRSNeedShowSplash);
+    CHECK(BDFRSpecAppColdOpenGate.installed == YES);
+    CHECK(BDFRSpecAppHotOpenGate.installed == YES);
+    CHECK(BDFROrigAppColdOpenGate == (IMP)PhColdGate);
+    CHECK(BDFROrigAppHotOpenGate == (IMP)PhHotGate);
+    CHECK(class_getMethodImplementation(object_getClass(gStrategyHost), gColdSel)
+          == (IMP)BDRSAppColdOpenGate);
+    CHECK(class_getMethodImplementation(object_getClass(gStrategyHost), gHotSel)
+          == (IMP)BDRSAppHotOpenGate);
 }
 
 #pragma mark - main
@@ -405,6 +718,11 @@ int main(void) {
         test_genuine_veto();
         test_argument_fidelity();
         test_gate_matrix();            // token 已消耗：矩阵只验规格 + 无新日志
+        // App Open 两条同样顺序：先「不该否决」→ 再真 hit → 最后矩阵（不消耗 token 次序）
+        test_appopen_no_false_hit();
+        test_appopen_cold_veto_identity();
+        test_appopen_hot_veto_enum();
+        test_appopen_matrix();
         test_idempotent_reinstall();
         test_skip_paths();
 

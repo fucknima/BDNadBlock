@@ -27,7 +27,6 @@
 |---|---|---|---|
 | `BDNadBlockEnabled` | 启用网盘净化 | YES | 总开关 |
 | `BDRemoveRecommend` | 隐藏推荐/创意区域 | YES | 首页 |
-| `BDRemoveHomePromo` | 隐藏首页年卡促销 | YES | 首页 |
 | `BDRemoveAITab` | 隐藏底部库库AI | YES | 首页 |
 | `BDRemoveJobNovel` | 隐藏求职/小说入口 | YES | 首页 |
 | `BDRemoveSearchPromo` | 隐藏搜索推广词 | YES | 首页 |
@@ -43,17 +42,21 @@
 | `BDRemoveTransferYikePromo` | 隐藏传输页一刻相册 | YES | 广告 |
 | `BDRemoveTransferGamePromo` | 隐藏下载小游戏引导 | YES | 广告 |
 | `BDRemoveTransferCardPromo` | 隐藏免流办卡推广 | YES | 广告 |
+| `BDRemoveTransferDataPromo` | 隐藏流量包付费引导 | YES | 广告 |
+| `BDRemoveTransferTrialPromo` | 隐藏加速试用促销 | YES | 广告 |
 | `BDNadBlockDumpOnly` | 仅诊断，不执行净化 | **NO** | 诊断 |
 
 开关 **ON = 去除/拦截**。`BDNadBlockEnabled` / `BDNadBlockNetwork` /
 `BDRemoveRecommend` / `BDRemoveGameCenter` / `BDNadBlockDumpOnly` 是旧版已有键，
 默认值与老版本 fallback 一致，老用户值继续被尊重。
 
-`BDRemoveHomePromo`（首页年卡促销）**功能本版未实施**：静态定位未收束，用户选择先做其它项。
-菜单里那一行只呈现副标题「待定位，本版本暂时保留」，没有 `UISwitch`、不读也不写该键的
-saved 值 —— 免得显示成「默认 YES 已生效」。规格表现有 19 个键，旧 18 个键与默认值不变，
-其中这一个的默认 YES **只是保留配置**；启动日志里 `active BDRemoveHomePromo = 1`
-也只是快照值，**不是该功能已接线的证据**。等定位收束后再接上真实开关。
+用户已反馈顶部横幅实验去掉年卡促销，故删除旧 `BDRemoveHomePromo` 规格项和「待定位」说明行。
+删除后原18项保持不变，新增流量包/试用促销两项后，当前是 **20个键、20个可切换项**。
+不清理设备上的旧键：退役键按未知键处理，读取 NO、写入拒绝、不进启动快照。
+
+“隐藏推广入口整排”（`BDRemovePersonalPromotions`）新增覆盖 `BDPanOperationSpaceSection` 的活动/广告运营整段。
+新 hook 先调用一次原 `heightForView`，再将其改为 `-6.0`，由已核宿主 `+6.0` 算为零行高；原值已为目标值时不记 hit。
+不新增配置，正常容量/会员信息/权益/备份等其它 section 保留；真机布局、动态和跨镜像调用仍未验证。
 
 传输页新增三项各自独立，均受总开关与非诊断条件控制，**不依赖** `BDNadBlockAdMethods`，改完冷启动生效：
 一刻相册（两条 `-canShowYikeBanner`）、下载小游戏引导、以及免流办卡的 widget gate
@@ -63,6 +66,11 @@ unsigned 值原样透传）。该 widget gate 只覆盖这一处判定：`refres
 该页实际是否进入办卡分支未验证，不能断言只影响传输页。企业 manager 自有同名实现未被替换；企业版孪生 widget 与企业版一刻相册
 都不在本版范围内（企业 Yike 的 base gate 实测直接 `mov 0` 返回，这条边界保留未处理）。
 截图与运行实例之间**没有真机证据**：文案与分支只做到静态对应，设备效果未验。
+
+新增 `BDRemoveTransferDataPromo` 只否决 controller 的 `showDataPkgWigdet`，不动已购买流量或正常下载。
+新增 `BDRemoveTransferTrialPromo` 只在取视图时过滤明确商品促销态：原实现先调一次，精确视图类、主线程、原生促销谓词真且进行中谓词假才返回 nil。
+进行中/未知/非主线程透传原对象；两个分类方法只读校验，不替换，依赖不符只跳过试用过滤。
+此 manager 也由企业侧使用，企业同款促销一并受影响；异步状态变化、实际效果和布局未真机验证。
 
 开屏闸门（`ResumeSplashRemoval.h`）**受 `BDNadBlockAdMethods` 控制，不新增键**：
 `-[BDNCUIAdvertisesManage needToShowSplashWithLaunchType:launchUrl:launchOptions:]`
@@ -76,12 +84,16 @@ unsigned 值原样透传）。该 widget gate 只覆盖这一处判定：`refres
 `serviceWithProtocol:`（`oversea_splash`）取得的动态 provider，热启动侧另见 `BDPanAdvertisementManager`；它们是否也执行这条 predicate **未证**，
 本轮**不**据此扩大 hook 面。**真机是否不再出现开屏仍未验证。**
 
+新增 App Open 的两条独立冷热策略 gate 同受 `BDNadBlockAdMethods` 控制：先原实现一次，冷策略按开关否决原 true，
+热策略只否决该方法已核 `from` 1/2/3/4，其它未知值透传。原生 NO 分支自行返回“不展示”，不创建广告回调对象/注册 handler，
+本组件不伪造 present/dismiss 回调，不动通用 scene 开关或定时器；不声称覆盖所有动态 provider/ADX/MAX 广告面。
+
 首页顶部横幅容器是**独立实验项**（`BDExperimentHideHomeBanner`，默认 **NO**，首页分组）：
-它**不是** `BDRemoveHomePromo` 的开关，也不改那行的说明文案。用户自行开启（我的 → 设置 → 网盘净化，
+原有 key、默认值和用户保存值不变，取代已删除的重复说明行。用户自行开启（我的 → 设置 → 网盘净化，
 「隐藏顶部横幅容器·实验」）后彻底退出重开才生效；回退就是关掉后冷启动，或装回旧库。
 只对 `BDPanNewMSHTopOperationView` 自己的候选 `_bannerView` 定点 `setHidden:YES`（原 `setup` 先调一次），
 不全局 hook `UIView`、不隐藏整个 TopOperation、不改父容器/约束/数据/网络，也不写死地址/坐标/尺寸。
-**状态：已实现，机制与SDK编译通过，真机效果未验证**；候选identity未证实，可能无效或留白。
+**状态：机制与SDK编译通过，用户已反馈单设备开启后年卡促销消失**；跨设备、其它内容和异步布局仍未验证。
 初始化完成后才尝试隐藏，并在检查时保护9个已知正常控件；守卫通过机制测试不代表已验证所有异步UI变化。
 
 ## 3. 函数名（主会话按这些接线）
@@ -175,8 +187,11 @@ present 之前还有主线程/modal 守卫，守卫拒绝时菜单不会出现�
   本轮开屏闸门扩到 0/2/3 的代码提交 `3989739` 已通过
   [CI 38916406687](https://github.com/fucknima/BDNadBlock/actions/runs/38916406687)：11 组机制测试（含开屏96组组合）、
   真实 UIKit 严格编译及双架构构建；验证分支没有下载产物。以上都只是**编译与机制**层面的证据。
-- **真机 UI 仍未验证**：菜单是否出现在真实设置页、开关是否可切、分享面板、
-  冷启动后是否真的生效，都要装包后人工确认。
+- **真机 UI 仍需逐项验证**：用户已提供菜单截图并反馈顶部实验去掉年卡；
+  本轮删除说明行后的菜单排布、分享面板及其它开关效果仍需装包确认。
+- **本轮完整代码** `5bb57b9` 已通过 [CI 38939593185](https://github.com/fucknima/BDNadBlock/actions/runs/38939593185)：
+  11组机制测试、真实UIKit严格编译及arm64/arm64e构建，验证分支不上传产物；包括20键与顶部实验保存YES不被新配置改动的检查。
+  新增运营位、流量包、试用促销及App Open闸门的真机效果和稳定性仍未验证，搜索推广按用户要求暂停。
 - **持久化未跨进程验证**：host 测试里“新 defaults 实例读到已保存值”只是**同进程 suite
   可见性**，不等于已验证真实进程重启后的落盘恢复；`BDNadPrefsGlobalSnapshot`
   的“建一次就不再变”也只能在真机（或模拟器）上确认。

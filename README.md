@@ -1,9 +1,9 @@
 # BDNadBlock
 
 百度网盘 (com.baidu.netdisk) **13.35.5**（build `13.35.5.6`）的净化 tweak：
-一个设置菜单 + **19 个保留配置键**（18 个可切换项 + 1 个「年卡待定位」的说明行）。
+一个设置菜单 + **20 个配置键、20 个可切换项**，不再显示重复的「年卡待定位」说明行。
 菜单之下挂两层广告拦截（网络规则 / 展示方法）和若干「原生组装或纯显示谓词」处的精准 hook。
-**13.32.2 的既有功能保留**：本轮只扩展开屏闸门的冷启动覆盖，其余项目仅复核签名元数据，见下方「目标版本与升级边界」。
+**13.32.2 的既有净化功能保留**，升级边界见下文；删除的是没有实现逻辑的重复说明行，不是顶部横幅功能。
 
 **实验版本。** 编译通过、selector 存在、hook 装上，都**不等于**真机生效。日志里两条也不同：
 `installed` = 替换实现装上了，`hit` = 本组件的抑制分支执行过一次；**两者都不是页面效果验证**。
@@ -20,14 +20,14 @@
 （`SettingConfigViewController` / `SettingViewController`），先调原实现，再把按钮
 **追加**到 `navigationItem.rightBarButtonItems` 末尾（保留原按钮与顺序）。
 两个类各自独立校验，一个不过只 skip 它自己。
-**真机上到底哪一页会出现这个按钮未验证。** 入口按钮不受总开关/诊断开关影响（关掉净化也仍能进菜单）。
+**用户已提供可进入菜单的真机截图**；其它系统与设置页变体未独立验证。入口按钮不受总开关/诊断开关影响（关掉净化也仍能进菜单）。
 按钮只在 `-viewDidLoad` 追加一次，之后不再补挂：若原生之后重建或重置这条导航栏，入口可能就不在了
 （未验证，也不加定时器去补）。
 
 ## 开关
 
-**唯一默认值表在 `Preferences.h`**（19 个保留配置键），菜单标题/分组也从那张表取，代码里不再抄第二份。
-只写本组件这 19 个键到 `NSUserDefaults`，不写账号、缓存或原生偏好。
+**唯一默认值表在 `Preferences.h`**（20 个配置键），菜单标题/分组也从那张表取，代码里不再抄第二份。
+只写本组件这 20 个键到 `NSUserDefaults`，不写账号、缓存或原生偏好。
 
 **保存后必须彻底退出 App 再冷启动才生效**：运行期所有 hook 读的是**进程启动快照**，
 菜单改值不改当前进程、不热改 UIKit、不自动退出、不清网盘数据。
@@ -36,12 +36,11 @@
 |---|---|---|---|
 | `BDNadBlockEnabled` | 启用网盘净化 | YES | 总开关 |
 | `BDRemoveRecommend` | 隐藏推荐/创意区域 | YES | 已实现 |
-| `BDRemoveHomePromo` | 隐藏首页年卡促销 | YES（仅保留配置） | **未实施**，菜单显示「待定位，本版本暂时保留」 |
 | `BDRemoveAITab` | 隐藏底部库库AI | YES | 已实现（索引换算需真机验证） |
 | `BDRemoveJobNovel` | 隐藏求职/小说入口 | YES | 已实现 |
 | `BDRemoveSearchPromo` | 隐藏搜索推广词 | YES | 已实现 |
 | `BDRemoveSearchAI` | 隐藏搜索框AI按钮 | YES | 已实现 |
-| `BDExperimentHideHomeBanner` | 隐藏顶部横幅容器·实验 | **NO** | **实验（默认关闭）**，见下方实验说明；与 `BDRemoveHomePromo` 是两回事 |
+| `BDExperimentHideHomeBanner` | 隐藏顶部横幅容器·实验 | **NO** | 用户已反馈开启后年卡促销消失；仍保留实验开关和旧保存值 |
 | `BDRemoveGameCenter` | 隐藏游戏中心 | YES | 已实现 |
 | `BDRemovePersonalPromotions` | 隐藏推广入口整排 | YES | 已接线（基线 CI 通过） |
 | `BDRemovePersonalBanner` | 隐藏活动轮播 | YES | 已实现 |
@@ -52,6 +51,8 @@
 | `BDRemoveTransferYikePromo` | 隐藏传输页一刻相册 | YES | 已接线（传输页推广） |
 | `BDRemoveTransferGamePromo` | 隐藏下载小游戏引导 | YES | 已接线（传输页推广） |
 | `BDRemoveTransferCardPromo` | 隐藏免流办卡推广 | YES | 已接线（免流办卡 widget gate） |
+| `BDRemoveTransferDataPromo` | 隐藏流量包付费引导 | YES | 独立开关，不禁用已购买流量 |
+| `BDRemoveTransferTrialPromo` | 隐藏加速试用促销 | YES | 只过滤明确促销态，保留进行中与未知态 |
 | `BDNadBlockDumpOnly` | 仅诊断，不执行净化 | **NO** | 诊断 |
 
 开关 **ON = 去除/拦截**。所有去除类开关的前置条件都是
@@ -68,36 +69,37 @@
 | 求职/小说 | `+[BDPanFeedHomeConfig cacheKingKongsConfigArray]` → 只从**最终模型数组**里去掉 `kingKongId` 13（求职）/ 6（小说） | 其余元素保序、同对象原样透传，**不拦 `/feed/kingkongdistrict` 这个接口**；相册/视频/扫描/备份/容量/最近等**全部保留** |
 | 搜索推广词 | 数据层 `-[BDPanSearchManager setStaticWordList:]`（`_staticWordList` 唯一写入口）传空数组；UI 层 `BDPanNewMSHSearchView` 三条 post-hook（`setupView` / `searchPlaceholderUpdated:` / `updateConstraintsWithProgress:`）走原实现的清空路径，并用 `SearchPlaceholder` 本地化 key 恢复普通占位文案 | **全部轮播词都去掉**（用户选定），不做分类/文本匹配；不清用户输入、不动搜索历史、不碰轮播词落盘 |
 | 搜索框 AI | 隐藏 `genflowButton` / `genflowAnimationView` / `cameraButton` / `cameraButtonAnimateBackground` 四个真实视图，并把 `searchButton.contentEdgeInsets` 收回 `(0, 8, 0, 12)` | 不改任何约束/frame，无延时重试；留白视觉效果待真机确认 |
-| 首页顶部横幅容器·**实验** | 只对 `BDPanNewMSHTopOperationView` **自己的候选 `_bannerView`** 定点 `setHidden:YES`（原 `setup` 先调一次） | **默认关闭**；**尚未定位首页年卡**（目标 identity 未证），可能无效、可能留白；不写死任何地址/坐标/尺寸，不全局 hook `UIView`，不隐藏整个 TopOperation，不改父容器/约束/数据/网络 |
+| 首页顶部横幅容器·**实验** | 只对 `BDPanNewMSHTopOperationView` **自己的候选 `_bannerView`** 定点 `setHidden:YES`（原 `setup` 先调一次） | **默认关闭**；用户已反馈开启后年卡促销消失，跨设备/异步布局仍待验；不写死任何地址/坐标/尺寸，不全局 hook `UIView`，不隐藏整个 TopOperation，不改父容器/约束/数据/网络 |
 | 底部 AI tab | `-[BDPanTabBarController setTabBarItemModels:]` 过滤**只有 `itemTabName == @"shenji_page"`** 的那条 + `customTabBar` 上下文 + 四个索引 getter 换算（`friendsIndex`/`magicTrickIndex`/`findSourceIndex`/`settingIndex`） | 六条 hook + 两个只读依赖全部校验通过才整组 attach；数组会被滤空时整次不滤。**可见模型过滤并同步索引，需真机测试登录 / 退出 / 企业空间切换** |
 | 我的·游戏中心 | `+[BDPanPersonalConfig gameCenterSwitch]` → NO | 组装闸门：只阻止新建区块，不负责删除已显示区块 |
 | 我的·活动轮播 | `+[BDPanPersonalConfig bannerSwitch]` → NO | 该开关为 NO 时原生就不建整个 banner section |
 | 我的·推广整排 | `-[BDPanPersonalWalletSection heightForView]` → `-6.0`；`-[BDPanPersonalCenterWalletSection heightForView]` → `-3.0`（各 class 自己的原生收起值） | 只影响读这两个 `heightForView` 的路径；不清数据、不拦接口，该区域请求是否仍发生未验证 |
+| 我的·运营位 | `-[BDPanOperationSpaceSection heightForView]`（`d16@0:8`）先调原实现一次，再按 `BDRemovePersonalPromotions` 改为 `-6.0` | 同时隐藏该段活动卡与广告/贷款卡。两版已核宿主固定加 `6.0` 合成零行高，**不是本类原生收起分支**；动态/跨镜像调用未穷尽，真机布局未验，不改其它 section |
 | 我的·任务卡 | `-[BDPanPersonalSpaceSection layoutViews]` / `-[BDPanPersonalSpaceAndPointSection layoutViews]` post-hook → 隐藏各自 `pointsCard` | 先布局后隐藏；**容量卡与行高常量（80.0 / 96.0）一点没碰**，任务卡位置允许留空 |
 | 我的·续费按钮 | 三处 `-vipButton` getter（`BDPanPersonNewVipCardHeaderView` / `BDPanPersonVipHeaderView` / `BDPanPersonAdvanceVIPHeaderView`）各自独立隐藏按钮 | **默认 NO**；只藏按钮，**整卡既有会员点击行为保留**；三条互不依赖 |
 | 传输页·一刻相册推广 | 两条 `-canShowYikeBanner`（`-[BDPanTransViewController …]` 与 `-[BDPanTransferFileTransListViewController …]`，各自 `B16@0:8`、类自有实例方法）**先调原实现取原 bool**，仅「原 true 且总开关开、非诊断、`BDRemoveTransferYikePromo` 开」时改判 false | 第一条宿主已证：gate 为 NO 时走原生行高入口的共同返回（**行高 0、无空行**），与「用户手动关闭」同一条布局；**不改索引/高度/section**。第二条 Yike 的运行期展示影响**尚未验证**，保留它只为「原方法先调一次 + 精确透传」 |
 | 传输页·下载小游戏引导 | `-[BDPanTransIdleGameManager canTransIdleGameWidgetShow]`（`B16@0:8`）同样先调原实现，仅在开关生效且原为 true 时改判 false | 原生消费点本就有「gate 为 NO → 直接返回、不存 block、不建 widget」的分支；**不改 AB gate、任务、速度、暂停、并发** |
-| 免流办卡推广 | `-[BDPanFreeWidgetManage chechFreeUnicomWidget]`（`Q16@0:8`，方法名拼写以产品为准）**先调原实现一次**，仅在开关生效且原结果为 **3** 时改判为 **0** | 只动这一个返回值：`0/1/2` 与其它 unsigned 值**原样透传**（`1`=免流已生效、`2`=激活提示都保留）；不写 `had*` 等原生偏好、不碰网络/通知/window/高度。3 对应的是办卡推广分支，native 拿到 0 后**不展示**它。**注意原生 fallback**：`refreshWidget` 里这条被否决后会继续判断其它 widget（数据包/备份/试用等），**所以不是「底部从此全空」**，本轮也不改这些 fallback。截图文案到运行实例**没有真机证据**（静态对应，设备效果未验） |
+| 免流办卡推广 | `-[BDPanFreeWidgetManage chechFreeUnicomWidget]`（`Q16@0:8`，方法名拼写以产品为准）**先调原实现一次**，仅在开关生效且原结果为 **3** 时改判为 **0** | `0/1/2` 与其它 unsigned 值原样透传，保留已生效免流与激活提示。原生仍继续判断其它 widget；本轮新增流量包/试用促销独立开关，**不代表底部全空**，不改备份/容量等正常提醒，真机效果待验 |
+| 流量包付费引导 | `-[BDPanTransWidgetController showDataPkgWigdet]`（`B16@0:8`）原实现先调一次，仅按独立开关否决原 true | 原生 false 分支自行判断可用流量及后续 widget；不修改已购买流量、查询/付款、下载任务与速度。共享 controller 也被备份详情等宿主使用，不能宣称仅影响传输页 |
+| 加速试用促销 | `-[BDNCSpeedUpTrialManager getSpeedUpTrialWidget]`（`@16@0:8`）先取原对象；只对已校验的精确 `BDNCSpeedUpTrialView`，在主线程且 `isProductGuideView` 真、`isInUseView` 假时返回原生合法值 nil | 原生宿主自行走无内容收尾。不更改状态枚举/计时器/加速权益；进行中、未知类型/子类/状态、非主线程一律原对象透传。分类只针对取视图当时，后续异步变更可能漏过；共用 manager 的企业侧同款促销亦在范围内 |
 | 冷启动＋热启动开屏闸门 | `-[BDNCUIAdvertisesManage needToShowSplashWithLaunchType:launchUrl:launchOptions:]`（`B40@0:8q16@24@32`，自有实例方法，argc 5）**先调原实现取原 bool**，仅当 `launchType` 是 **0（冷启动）或 2 / 3（热启动）** 且原结果为真时改判为假 | 受 `BDNadBlockAdMethods` 控制（总开关开且非诊断）。**原策略、状态消费与埋点全部照跑**，只改返回值；`launchType` 1 / 负值 / 未知正值仍精确透传；**不碰 window / timer / 系统前台恢复 / 时长 / 竞价**。详见下文 |
+| App Open 冷热策略 | `-[BDPanAdvertisementStrategy isEnableShowAdForAppColdOpenWithLaunchoptions:]`（`B24@0:8@16`）与 `-isEnableShowAdForAppHotOpenWithFrom:`（`B24@0:8q16`），均先调原实现一次，再按 `BDNadBlockAdMethods` 否决原 true | 不展示分支在创建广告回调对象、注册 handler 之前返回 NO，不补任何回调。热策略仅过滤已核 `from` 1/2/3/4，未知值透传；这是该方法自己的枚举，不与 BDNC 的 0/2/3 混用。不声称覆盖所有 ADX/MAX 信息流或其它 scene |
 
 各组件都复用 `FeatureRemoval.h` 的同一套安装原语（`BDFRSpec` / `BDFRResolve` /
 `BDFRCanAttach` / `BDFRAttach` / `BDFRInstallSpec` / `BDFRSuppressed`），不另抄一份。
-传输页这两个开关**不依赖** `BDNadBlockAdMethods`（那条只管旧 18 个广告 selector 与开屏闸门）：
-生效条件是总开关开、非诊断、且各自开关开，改完**下次冷启动**才生效；免流办卡那条同样受这三层开关控制、
-**不依赖** `BDNadBlockAdMethods`，也不热更新。
+传输页各项独立开关**不依赖** `BDNadBlockAdMethods`（后者控制旧18条广告展示与两套开屏闸门）。
+生效条件是总开关开、非诊断、且各自开关开，改完**下次冷启动**才生效，不热更新。
 本包已接线非企业 manager 的免流办卡 gate（`BDRemoveTransferCardPromo`）。同款 widget controller
 还被备份详情页引用，因此不声称只影响传输页；备份详情页实际是否走到办卡分支尚未验证。
-企业 manager 自有同名实现未改动，`refreshWidget` 的其它 fallback 分支也不在本补丁内；
-企业版传输页的 Yike 消费者也仍未处理。文件 / AI 推荐等正常功能一律保留。
-首页年卡促销（`BDRemoveHomePromo`）**本版未实施**：静态定位未收束，用户选择先做其它项；
-菜单里那一行只有说明文案、没有开关，也不读写它的 saved 值，避免显示成「默认 YES 已生效」。
-规格表里那个默认 YES 只是**保留配置**，启动日志里的 `active BDRemoveHomePromo = 1`
-同样只是快照值，**不是该功能已接线的证据**。
+企业免流 manager 自有同名实现未改动，企业版 Yike 仍未处理；新增试用促销过滤则覆盖共用 manager 的企业侧同款展示。
+备份/无空间试用的其它取视图实现不在该过滤范围；正常容量、备份、已激活加速及文件 / AI 推荐等功能保留。
+用户在 2026-10-16 反馈：开启顶部横幅实验后，首页年卡促销已消失。因此删除重复的
+「隐藏首页年卡促销·待定位」说明行及未接线的 `BDRemoveHomePromo` 规格项。
+不清理设备上的旧键、不迁移或重置 `BDExperimentHideHomeBanner`，用户已保存的开启状态继续保留。
 
 ### 实验：隐藏顶部横幅容器（`BDExperimentHideHomeBanner`，默认关闭）
 
-用户要求「先移除了装上试试」，所以这一项做成**独立、可回退的实验开关**，和上面那个待定位的
-`BDRemoveHomePromo` 是两件事：
+这一项继续保留为**独立、可回退的实验开关**，不另建第二套年卡移除实现：
 
 - **怎么开**：网盘「我的 → 设置 → 网盘净化」里打开 **「隐藏顶部横幅容器·实验」**，
   然后**彻底退出后台再重开**网盘（运行期只读进程启动快照，不热改本进程）。
@@ -105,11 +107,11 @@
 - **范围**：只对 `BDPanNewMSHTopOperationView` 自己的**候选 `_bannerView`** 定点 `setHidden:YES`，
   原 `setup` 先调一次；**不是**全局 `UIView` hook，也**不隐藏整个 TopOperation**，
   不动父容器 / 约束 / 数据 / 网络。
-- **状态：已实现并通过机制测试与 SDK 编译，真机效果未验证。** 目标 identity **尚未证实**，所以
-  可能**完全无效**，也可能隐藏其它内容、或留下空白。初始化完成后才尝试隐藏；检查时若候选包含
+- **状态：已实现并通过机制测试与 SDK 编译，用户已反馈单设备年卡促销移除有效。**
+  不据此宣称所有设备/内容/布局稳定性均已验证。初始化完成后才尝试隐藏；检查时若候选包含
   搜索框 / 上传加号 / 传输 / 签到 / 状态动画等9个已知正常控件，就保留。
   这些守卫已通过机制测试，但**不等于真机上任何异步加入的内容都已验证**。
-- **不要把它当作已定位成功**：它不改变「首页年卡促销（`BDRemoveHomePromo`）仍未实施」这条结论。
+- 无需再开启另一条年卡开关；旧待定位行已移除，默认值仍为 NO，原有保存值不变。
 
 ## 网络层（`BDNadBlockNetwork`，实验）
 
@@ -171,7 +173,7 @@ bcebos 的 `cmpkg` 整目录（里面还有 `1_swan-core` 小程序运行时）�
 arm64 / arm64e 双架构构建通过：
 <https://github.com/fucknima/BDNadBlock/actions/runs/38863989849>。
 **那次通过的是「只覆盖热启动」的版本，冷启动覆盖是后来扩的**，不在那个 run 里。
-本轮扩到 0/2/3 的代码提交 `3989739` 已通过
+此前扩到 0/2/3 的代码提交 `3989739` 已通过
 [CI 38916406687](https://github.com/fucknima/BDNadBlock/actions/runs/38916406687)：
 11 组机制测试（含开屏 96 组组合回归）、真实 UIKit 严格编译及 arm64 / arm64e 构建；验证分支未上传产物。
 真机上「空白开屏 / 全屏开屏是否消失」仍未验证。
@@ -179,9 +181,9 @@ arm64 / arm64e 双架构构建通过：
 
 ## 目标版本与升级边界
 
-- **静态适配目标是 13.35.5（build `13.35.5.6`）**；本轮仅扩展开屏闸门的冷启动覆盖，旧 13.32.2 的既有功能保留；
-  其它项目只复核签名元数据，没有为某个版本删功能。
-- 对新包跑仓库既有校验器：**18 个广告 selector + 31 个精准 hook + 14 个依赖全部 encoding 匹配、0 问题**。
+- **静态适配目标是 13.35.5（build `13.35.5.6`）**；已有冷/热启动开屏修复保留，本轮删除重复年卡说明行，
+  本轮继续处理新发现的推广入口。用户已明确暂停搜索页「试试这样问」，**本轮不移除该模块、不改搜索逻辑**。
+- 对13.35.5与13.32.2分别跑仓库既有校验器：**18个广告 selector + 36个精准 hook + 16个依赖全部 encoding 匹配、0问题**。
   这只说明**签名元数据兼容**，**不宣称**所有旧 feature 在 13.35.5 上的实际 UI 效果都已适配或安全 ——
   页面结构、展示时机、布局都要真机看。
 - 新包 `MinimumOS 18.0` 是 App 自己的 `Info.plist` 要求，**不是**本插件的要求；插件自身部署目标保持
@@ -230,9 +232,13 @@ UIKit strict syntax 与 arm64 / arm64e 双架构构建；此前 `7e4d8e92`（run
 [CI 38905984074](https://github.com/fucknima/BDNadBlock/actions/runs/38905984074)：11组host机制测试、
 真实UIKit严格编译及arm64 / arm64e双架构构建。验证分支没有可下载artifact，等 `main` 成功才发布；
 **该实验的真机效果仍未验证**。
-**最近一次历史基线**是 `main` 的 `b6a2c42`（CI run `38906342452`）：11 组 host 机制测试、
+**顶部实验历史发布基线**是 `main` 的 `b6a2c42`（CI run `38906342452`）：11 组 host 机制测试、
 真实 UIKit 严格编译与 arm64 / arm64e 双架构构建全部通过。
-**本轮「开屏闸门扩到 0/2/3」代码提交 `3989739` 的验证 CI `38916406687` 已通过**，仅 `main` 发布 CI 成功后提供下载；
+**开屏闸门扩到 0/2/3** 的代码提交 `3989739` 的验证 CI `38916406687` 已通过；
+已合入 `main 77d0621`，发布 [CI 38916663734](https://github.com/fucknima/BDNadBlock/actions/runs/38916663734) 通过。
+菜单删除提交 `97481d2` 已通过 [CI 38924448154](https://github.com/fucknima/BDNadBlock/actions/runs/38924448154)。
+本轮完整推广代码 `5bb57b9` 已通过 [CI 38939593185](https://github.com/fucknima/BDNadBlock/actions/runs/38939593185)：
+11组机制测试（含运营位24组合、流量包16组合、试用身份/依赖/非主线程与App Open 144组合回归）、真实UIKit严格编译及arm64/arm64e构建；验证分支未上传产物，仅 `main` 发布 CI 成功后提供新下载。
 `BDExperimentHideHomeBanner` 仍默认关闭，既有净化项一个都没有删除。
 这些都只是**编译与机制**层面的证据：**真机效果未验，编译与机制测试都不等于真机生效。**
 
@@ -283,8 +289,7 @@ log stream --predicate 'eventMessage CONTAINS "BDNadBlock"'
 1. **一切都要真机确认**：菜单入口可达性、每个开关对应的页面效果、留白/空位、网络层真实拦截率。
 2. **不保证所有相关请求都停止**：仅隐藏视图的规则下请求可能照旧发生；原生 gate 可能在
    创建/请求之前就阻断；网络 matcher 命中的请求本来就不发出。哪种情况适用要看具体规则。
-3. 首页年卡促销（`BDRemoveHomePromo`）**本版未实施**，菜单里是说明行；
-   规格表里的默认 YES 只是保留配置，日志里的快照值也不是接线证据。
+3. 首页年卡促销已有用户单设备反馈移除有效；顶部横幅实验在其它设备、内容变化和异步布局下仍可能误伤或留白。
 4. 推荐/创意的 hook 只保证「渲染 + 组装 + 已有解析/分页路径」；共享 manager 的冷启动预取、
    socket / VoIP / remotePush 入口没有被证明被挡住。游戏中心那条是组装闸门。
 5. 任务卡隐藏后**容量区域与 section 原行高都保留**（80.0 / 96.0 未动），只是任务卡原占位可能留白；

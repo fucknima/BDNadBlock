@@ -85,6 +85,8 @@ FEATURE_HOOKS = [
     # **double 返回（d）**，写成 @ / q 都会被判成签名不符而整条放弃。
     ("BDPanPersonalWalletSection", "-", "heightForView", "d16@0:8"),
     ("BDPanPersonalCenterWalletSection", "-", "heightForView", "d16@0:8"),
+    # 运营位：活动卡与广告卡整段，原实现先调用一次；宿主 +6.0 合成零行高。
+    ("BDPanOperationSpaceSection", "-", "heightForView", "d16@0:8"),
     # 「我的」积分卡：两个 section 各自的 -layoutViews（post-hook 里再摘 pointsCard）。
     ("BDPanPersonalSpaceAndPointSection", "-", "layoutViews", "v16@0:8"),
     ("BDPanPersonalSpaceSection", "-", "layoutViews", "v16@0:8"),
@@ -92,6 +94,9 @@ FEATURE_HOOKS = [
     # self/_cmd + q + @ + @（argc 5，运行期仍由 installer 用 method_getNumberOfArguments 兜底）。
     ("BDNCUIAdvertisesManage", "-", "needToShowSplashWithLaunchType:launchUrl:launchOptions:",
      "B40@0:8q16@24@32"),
+    # App Open 只否决独立冷热策略，不碰展示回调和通用 scene 开关。
+    ("BDPanAdvertisementStrategy", "-", "isEnableShowAdForAppColdOpenWithLaunchoptions:", "B24@0:8@16"),
+    ("BDPanAdvertisementStrategy", "-", "isEnableShowAdForAppHotOpenWithFrom:", "B24@0:8q16"),
     # 传输页推广：一刻相册 gate 有两个宿主类（各自独立安装），下载小游戏引导在 manager 上；
     # 三条都是 B16@0:8、argc 2 的自有实例方法。
     ("BDPanTransViewController", "-", "canShowYikeBanner", "B16@0:8"),
@@ -100,7 +105,9 @@ FEATURE_HOOKS = [
     # 免流办卡 widget 的 gate：Q16@0:8（unsigned long long，不是 B/q）。
     # 拼写 chech 是产品原样，**不要**改成 check。
     ("BDPanFreeWidgetManage", "-", "chechFreeUnicomWidget", "Q16@0:8"),
-    # 顶部候选容器实验：两条自有方法成组 post-hook，默认关闭；不是已确认的年卡移除。
+    ("BDPanTransWidgetController", "-", "showDataPkgWigdet", "B16@0:8"),
+    ("BDNCSpeedUpTrialManager", "-", "getSpeedUpTrialWidget", "@16@0:8"),
+    # 顶部容器实验：两条自有方法成组 post-hook，默认关闭；用户已反馈单设备去掉年卡。
     ("BDPanNewMSHTopOperationView", "-", "setupView", "v16@0:8"),
     ("BDPanNewMSHTopOperationView", "-", "bannerView", "@16@0:8"),
 ]
@@ -108,6 +115,9 @@ FEATURE_HOOKS = [
 # **依赖** accessor：hook 自己不发消息，是安装前只读校验的对象（校验不过就整条跳过）。
 # 同样要求完整 encoding 一致 —— 它变了，过滤逻辑就会按错误布局读 id 或错调清空路径。
 FEATURE_DEPS = [
+    # 加速试用只过滤原生明确的促销态，进行中与未知态保留；这两条只读、不替换。
+    ("BDNCSpeedUpTrialView", "-", "isProductGuideView", "B16@0:8"),
+    ("BDNCSpeedUpTrialView", "-", "isInUseView", "B16@0:8"),
     # H4 的依赖：-kingKongId 是 q16@0:8。
     ("BDPanFHKingKongsModel", "-", "kingKongId", "q16@0:8"),
     # 搜索框三条 post-hook 的 getter 依赖：全部 @16@0:8（id 返回）。
