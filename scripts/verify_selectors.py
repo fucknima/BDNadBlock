@@ -74,6 +74,8 @@ FEATURE_HOOKS = [
     ("BDTabViewController", "+", "magicTrickIndex", "q16@0:8"),
     ("BDTabViewController", "+", "findSourceIndex", "q16@0:8"),
     ("BDTabViewController", "+", "settingIndex", "q16@0:8"),
+    # 「我的」活动轮播：类方法（metaclass）、B16@0:8、argc 2。
+    ("BDPanPersonalConfig", "+", "bannerSwitch", "B16@0:8"),
 ]
 
 # **依赖** accessor：hook 自己不发消息，是安装前只读校验的对象（校验不过就整条跳过）。
