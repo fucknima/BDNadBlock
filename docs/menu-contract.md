@@ -64,6 +64,18 @@ unsigned 值原样透传）。该 widget gate 只覆盖这一处判定：`refres
 都不在本版范围内（企业 Yike 的 base gate 实测直接 `mov 0` 返回，这条边界保留未处理）。
 截图与运行实例之间**没有真机证据**：文案与分支只做到静态对应，设备效果未验。
 
+开屏闸门（`ResumeSplashRemoval.h`）**受 `BDNadBlockAdMethods` 控制，不新增键**：
+`-[BDNCUIAdvertisesManage needToShowSplashWithLaunchType:launchUrl:launchOptions:]`
+（`B40@0:8q16@24@32`，自有实例方法，argc 5）**先调原实现一次**取原 bool，
+仅当 `launchType` 是 **0（冷启动）/ 2 / 3（热启动）** 且原为 true 时改判 false；
+`1` / 负值 / 未知正值，以及总开关关、诊断开、`BDNadBlockAdMethods` 关，一律精确透传。
+日志名沿用 `resume-splash-gate`（现在也覆盖冷启动）。原生 not-show 分支自己设置
+`isNotSplashWindow`（仅已核的 iPhone 分支）/ `decidedNotShow`（冷启动上游还会自己发 `notifyIsShowSplashWindow:0`）
+并继续启动，本组件**不补 callback、不伪造通知、不碰 window / timer / timeout / 竞价**。
+**范围边界**：静态已核的是当前 manager 这条路径；冷启动侧另有一条经
+`serviceWithProtocol:`（`oversea_splash`）取得的动态 provider，热启动侧另见 `BDPanAdvertisementManager`；它们是否也执行这条 predicate **未证**，
+本轮**不**据此扩大 hook 面。**真机是否不再出现开屏仍未验证。**
+
 首页顶部横幅容器是**独立实验项**（`BDExperimentHideHomeBanner`，默认 **NO**，首页分组）：
 它**不是** `BDRemoveHomePromo` 的开关，也不改那行的说明文案。用户自行开启（我的 → 设置 → 网盘净化，
 「隐藏顶部横幅容器·实验」）后彻底退出重开才生效；回退就是关掉后冷启动，或装回旧库。

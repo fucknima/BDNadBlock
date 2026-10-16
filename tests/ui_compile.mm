@@ -60,7 +60,7 @@ static BOOL BDAdMethodsEnabled(void)    { return BDNadPrefsActive(@"BDNadBlockAd
 // HomeBannerExperiment.h 首页顶部横幅容器·实验（UIKit 由本文件顶部 import 提供；默认关闭）
 // SearchDataRemoval.h / SearchViewRemoval.h 搜索框数据层与 UI 层（必须在 FeatureRemoval.h 之后）
 // MenuEntry.h      设置页入口按钮（需要菜单入口 + 安装器）
-// ResumeSplashRemoval.h 热启动空白开屏展示闸门（在 FeatureRemoval.h 之后，用 BDAdMethodsEnabled）
+// ResumeSplashRemoval.h 冷/热启动开屏展示闸门（在 FeatureRemoval.h 之后，用 BDAdMethodsEnabled）
 #include "SettingsMenu.h"
 #include "FeatureRemoval.h"
 #include "TabRemoval.h"
@@ -89,6 +89,6 @@ void BDNadUICompileCheck(UIViewController *host, NSURL *logURL) {
     BDSRInstallData();                       // 搜索框轮播词数据层
     BDSRInstallView();                       // 搜索框 UI 层三条 post-hook（整组校验）
     BDMEInstallAll();                        // 设置页导航条「网盘净化」入口
-    BDRSInstallAll();                        // 热启动空白开屏：展示判定闸门（单条 spec）
+    BDRSInstallAll();                        // 冷/热启动开屏：展示判定闸门（单条 spec）
     BDPresentPurificationSettings(host, logURL);   // 菜单入口的真实签名
 }

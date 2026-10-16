@@ -133,7 +133,7 @@ static BOOL BDRemoveTransferGamePromo(void) { return BDNadPrefsActive(@"BDRemove
 static BOOL BDRemoveTransferYikePromo(void) { return BDNadPrefsActive(@"BDRemoveTransferYikePromo"); }
 static BOOL BDRemoveTransferCardPromo(void) { return BDNadPrefsActive(@"BDRemoveTransferCardPromo"); }
 static BOOL BDExperimentHideHomeBanner(void) { return BDNadPrefsActive(@"BDExperimentHideHomeBanner"); }
-// 广告展示拦截（旧 18 条 no-op 与热启动空白开屏闸门共用这一个开关）
+// 广告展示拦截（旧 18 条 no-op 与冷/热启动开屏闸门共用这一个开关）
 static BOOL BDAdMethodsEnabled(void)   { return BDNadPrefsActive(@"BDNadBlockAdMethods"); }
 
 // 网络拦截总门：总开关 + 诊断 + 网络开关的组合，任一不满足就整层不拦。
@@ -165,7 +165,7 @@ static BOOL BDBlockNetwork(void) {
 #include "SearchDataRemoval.h"
 #include "SearchViewRemoval.h"
 #include "MenuEntry.h"
-#include "ResumeSplashRemoval.h"   // 热启动空白开屏：展示判定闸门（依赖 FeatureRemoval.h 的安装器与 BDAdMethodsEnabled）
+#include "ResumeSplashRemoval.h"   // 冷/热启动开屏：展示判定闸门（依赖 FeatureRemoval.h 的安装器与 BDAdMethodsEnabled）
 
 #pragma mark - 网络拦截规则
 
@@ -465,7 +465,7 @@ static void BDNadBlockInit(void) {
     BDFRInstallAll();
     BDHBInstallAll();    // 首页顶部横幅容器·实验（默认关闭；装好也不改行为，开关关闭时原样透传）
     BDTPInstallAll();    // 一刻相册行内推广 / 下载小游戏引导 / 免流办卡：三条 bool + 一条 Q 类型选择，各自独立安装
-    BDRSInstallAll();    // 热启动空白开屏：-needToShowSplashWithLaunchType:launchUrl:launchOptions: 单条闸门
+    BDRSInstallAll();    // 冷/热启动开屏：-needToShowSplashWithLaunchType:launchUrl:launchOptions: 单条闸门
     BDPRInstallData();   // 「我的」活动轮播 + 推广整排（bannerSwitch -> NO，钱包行高折叠）
     BDPVInstallAll();    // 「我的」任务卡：两条 -layoutViews post-hook（先布局后隐藏，installer 不做 UI 操作）
     BDRBInstallAll();    // 「去续费」按钮：三条 -vipButton 各自独立安装（默认保留该按钮）

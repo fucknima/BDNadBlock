@@ -6,8 +6,8 @@
 // 测的是**机制**：
 //   - hook 装在 BDNCUIAdvertisesManage 自己方法表的实例方法槽上，encoding B40@0:8q16@24@32 / argc 5；
 //   - 原 IMP 每次**先且只调一次**，原 bool 先拿到手；
-//   - 只有 总开关&&!诊断&&广告方法开关 && launchType∈{2,3} && 原结果为 true 才否决成 false；
-//   - 其它 launchType（0/1/负值/未知正值）、任一开关关、原结果 false 一律精确透传原 bool；
+//   - 只有 总开关&&!诊断&&广告方法开关 && launchType∈{0,2,3} && 原结果为 true 才否决成 false；
+//   - 其它 launchType（1/负值/未知正值）、任一开关关、原结果 false 一律精确透传原 bool；
 //   - 5 个参数原样传递（含 nil），receiver 与 _cmd 准确；
 //   - 重复安装不动 IMP、orig 不自指、不递归；
 //   - 独立 phantom 描述覆盖 类缺失 / encoding 不符 / argc 不符 / 只有父类实现 四种不装路径。
@@ -169,36 +169,38 @@ static void test_no_false_hit(void) {
     gEnabled = YES; gDumpOnly = NO; gAdMethods = YES;
     unsigned logsBefore = gLogLines;
 
-    // 原结果 false：本来就展示不了，原样 false，不记 hit
+    // 原结果 false：本来就展示不了，已知的 0/2/3 全部原样 false，不记 hit
     gOriginalResult = false;
-    CHECK(SendAndCount(gManageHost, 2, nil, nil) == false);
-    CHECK(SendAndCount(gManageHost, 3, nil, nil) == false);
+    for (NSInteger t = 0; t <= 3; t++) {
+        CHECK(SendAndCount(gManageHost, t, nil, nil) == false);
+    }
 
-    // 非热启动 launchType：无论原结果真假都透传
+    // 未知/兜底 launchType：无论原结果真假都透传（不把未知值当冷热启动）
     gOriginalResult = true;
-    CHECK(SendAndCount(gManageHost, 0, nil, nil) == true);       // 冷启动
     CHECK(SendAndCount(gManageHost, 1, nil, nil) == true);
     CHECK(SendAndCount(gManageHost, -1, nil, nil) == true);      // 负值
     CHECK(SendAndCount(gManageHost, 7, nil, nil) == true);       // 未知正值
     gOriginalResult = false;
-    CHECK(SendAndCount(gManageHost, 0, nil, nil) == false);
     CHECK(SendAndCount(gManageHost, 1, nil, nil) == false);
     CHECK(SendAndCount(gManageHost, -1, nil, nil) == false);
     CHECK(SendAndCount(gManageHost, 7, nil, nil) == false);
 
-    // 三个开关各自关掉：launchType 2/3 + 原 true 也必须透传
-    gEnabled = NO;
+    // 三个开关各自关掉：0/2/3 + 原 true 也必须透传（绝不能在这里提前消耗 hit token）
     gOriginalResult = true;
+    gEnabled = NO;
+    CHECK(SendAndCount(gManageHost, 0, nil, nil) == true);
     CHECK(SendAndCount(gManageHost, 2, nil, nil) == true);
     CHECK(SendAndCount(gManageHost, 3, nil, nil) == true);
     gEnabled = YES;
 
     gDumpOnly = YES;
+    CHECK(SendAndCount(gManageHost, 0, nil, nil) == true);
     CHECK(SendAndCount(gManageHost, 2, nil, nil) == true);
     CHECK(SendAndCount(gManageHost, 3, nil, nil) == true);
     gDumpOnly = NO;
 
     gAdMethods = NO;
+    CHECK(SendAndCount(gManageHost, 0, nil, nil) == true);
     CHECK(SendAndCount(gManageHost, 2, nil, nil) == true);
     CHECK(SendAndCount(gManageHost, 3, nil, nil) == true);
     gAdMethods = YES;
@@ -206,20 +208,23 @@ static void test_no_false_hit(void) {
     CHECK(gLogLines == logsBefore);          // 以上一次真 hit 都没有
 }
 
-// 真正否决：只有 热启动(2/3) + 三开关全开 + 原 true 这一种组合，且只在第一次记 hit。
+// 真正否决：0/2/3 + 三开关全开 + 原 true 这一种组合，且只在第一次（冷启动 0）记一行 hit。
 static void test_genuine_veto(void) {
     unsigned logsBefore = gLogLines;
     gEnabled = YES; gDumpOnly = NO; gAdMethods = YES;
     gOriginalResult = true;
 
-    CHECK(SendAndCount(gManageHost, 2, nil, nil) == false);        // 原 true -> 否决
+    CHECK(SendAndCount(gManageHost, 0, nil, nil) == false);        // 冷启动 0：原 true -> 否决
     CHECK(gLogLines == logsBefore + 1);                            // 首次真正 hit，恰好一行
+    CHECK(SendAndCount(gManageHost, 0, nil, nil) == false);        // 重复 0 仍然否决
+    CHECK(SendAndCount(gManageHost, 2, nil, nil) == false);
     CHECK(SendAndCount(gManageHost, 3, nil, nil) == false);
     CHECK(gLogLines == logsBefore + 1);                            // dispatch_once：不再重复
 
-    // 否决之后，非热启动仍然原值
-    CHECK(SendAndCount(gManageHost, 0, nil, nil) == true);
+    // 否决之后，未知 launchType 仍然原值
     CHECK(SendAndCount(gManageHost, 1, nil, nil) == true);
+    CHECK(SendAndCount(gManageHost, -1, nil, nil) == true);
+    CHECK(SendAndCount(gManageHost, 7, nil, nil) == true);
     CHECK(gLogLines == logsBefore + 1);
 }
 
@@ -230,32 +235,81 @@ static void test_argument_fidelity(void) {
 
     NSString *url = @"bdnetdisk://n/action.maintab";
     NSDictionary *opts = @{@"UIApplicationLaunchOptionsURLKey": url};
-    gSeenSelf = nil; gSeenCmd = NULL; gSeenType = -999; gSeenUrl = nil; gSeenOptions = nil;
 
-    // 非 nil：identity 精确，不复制、不换对象
-    CHECK(SendAndCount(gManageHost, 3, url, opts) == false);        // 真 hit 情形，顺便验否决
+    // 冷启动 0 + nil：不造默认对象，原样传 nil
+    gSeenSelf = nil; gSeenCmd = NULL; gSeenType = -999; gSeenUrl = (id)@"sentinel"; gSeenOptions = (id)@"sentinel";
+    CHECK(SendAndCount(gManageHost, 0, nil, nil) == false);        // 0 已纳入否决：真 hit 情形
     CHECK(gSeenSelf == gManageHost);
     CHECK(gSeenCmd == gGateSel);
-    CHECK(gSeenType == 3);
+    CHECK(gSeenType == 0);
+    CHECK(gSeenUrl == nil);
+    CHECK(gSeenOptions == nil);
+
+    // 冷启动 0 + 非 nil：identity 精确，不复制、不换对象
+    gSeenType = -999; gSeenUrl = nil; gSeenOptions = nil;
+    CHECK(SendAndCount(gManageHost, 0, url, opts) == false);
+    CHECK(gSeenSelf == gManageHost);
+    CHECK(gSeenCmd == gGateSel);
+    CHECK(gSeenType == 0);
     CHECK(gSeenUrl == url);
     CHECK(gSeenOptions == opts);
 
-    // nil：不造默认对象，原样传 nil
-    gSeenUrl = (id)@"sentinel"; gSeenOptions = (id)@"sentinel";
-    CHECK(SendAndCount(gManageHost, 2, nil, nil) == false);
-    CHECK(gSeenUrl == nil);
-    CHECK(gSeenOptions == nil);
-    CHECK(gSeenType == 2);
-    CHECK(gSeenSelf == gManageHost);
+    // 冷启动混合参数与热启动的原有非 nil 参数路径也须保持 identity。
+    CHECK(SendAndCount(gManageHost, 0, nil, opts) == false);
+    CHECK(gSeenUrl == nil && gSeenOptions == opts && gSeenType == 0);
+    CHECK(SendAndCount(gManageHost, 3, url, opts) == false);
+    CHECK(gSeenUrl == url && gSeenOptions == opts && gSeenType == 3);
 
-    // 另一组：url 有、options nil（混合），launchType 用非热启动值验证透传
+    // 混合：url 有、options nil，用未知 launchType 1 验证透传
     gSeenUrl = nil; gSeenOptions = (id)@"sentinel"; gSeenType = -999;
     CHECK(SendAndCount(gManageHost, 1, url, nil) == true);
     CHECK(gSeenUrl == url);
     CHECK(gSeenOptions == nil);
     CHECK(gSeenType == 1);
+    CHECK(gSeenSelf == gManageHost);
 
-    CHECK(gLogLines == logsBefore);        // 这两组都没有新的 hit（前两个 case 已 hit 过）
+    CHECK(gLogLines == logsBefore);        // 这一组没有新的 hit（token 在前面已消耗）
+}
+
+// 紧凑组合检查：真实 hook + SendAndCount，规格 = 「原 true 且三开关全开且 launchType∈{0,2,3}」才否决。
+// token 已在 test_genuine_veto 消耗，所以这里全程都不该再出现新日志。
+static void test_gate_matrix(void) {
+    const BOOL bools[2] = {YES, NO};
+    const bool origs[2] = {true, false};
+    const NSInteger known[] = {0, 2, 3};        // 纳入否决的三种
+    const NSInteger unknown[] = {1, -1, 7};     // 一律透传
+    unsigned logsBefore = gLogLines;
+    unsigned checked = 0;
+
+    for (unsigned o = 0; o < 2; o++)
+    for (unsigned e = 0; e < 2; e++)
+    for (unsigned d = 0; d < 2; d++)
+    for (unsigned a = 0; a < 2; a++) {
+        gEnabled = bools[e]; gDumpOnly = bools[d]; gAdMethods = bools[a];
+        gOriginalResult = origs[o];
+        BOOL gate = bools[e] && !bools[d] && bools[a];
+
+        for (unsigned k = 0; k < 3; k++) {
+            bool want = origs[o] && !gate;
+            if (SendAndCount(gManageHost, known[k], nil, nil) != want) {
+                fprintf(stderr, "FAIL %s:%d: known %ld (orig=%d enabled=%d dump=%d adMethods=%d)\n",
+                        __FILE__, __LINE__, (long)known[k], origs[o], bools[e], bools[d], bools[a]);
+                gFailures++;
+            }
+            checked++;
+        }
+        for (unsigned u = 0; u < 3; u++) {
+            if (SendAndCount(gManageHost, unknown[u], nil, nil) != origs[o]) {
+                fprintf(stderr, "FAIL %s:%d: unknown %ld (orig=%d enabled=%d dump=%d adMethods=%d)\n",
+                        __FILE__, __LINE__, (long)unknown[u], origs[o], bools[e], bools[d], bools[a]);
+                gFailures++;
+            }
+            checked++;
+        }
+    }
+    CHECK(checked == 2 * 2 * 2 * 2 * 6);
+    CHECK(gLogLines == logsBefore);             // token 已消耗：一行都不该再多
+    gEnabled = YES; gDumpOnly = NO; gAdMethods = YES; gOriginalResult = true;
 }
 
 // 重复安装：不动 IMP、orig 不自指、原实现仍然每次只跑一次（不递归）。
@@ -272,7 +326,8 @@ static void test_idempotent_reinstall(void) {
     CHECK(BDFROrigResumeSplashGate == (IMP)PhNeedShow);              // 没被覆盖成 hook
     CHECK(BDFROrigResumeSplashGate != (IMP)BDRSNeedShowSplash);
     CHECK(gLogLines == logsBefore + 2);        // 共享安装器对已装 spec 各打一行「already installed」
-    CHECK(SendAndCount(gManageHost, 2, nil, nil) == false);          // 转发正常，计数 +1 不递归
+    CHECK(SendAndCount(gManageHost, 0, nil, nil) == false);          // 冷启动 0：转发正常，计数 +1 不递归
+    CHECK(SendAndCount(gManageHost, 2, nil, nil) == false);          // 热启动 2 同样
     CHECK(gLogLines == logsBefore + 2);                              // 重复安装不再产生 hit
 }
 
@@ -349,6 +404,7 @@ int main(void) {
         test_no_false_hit();           // 必须早于 test_genuine_veto：验「不假记 hit」
         test_genuine_veto();
         test_argument_fidelity();
+        test_gate_matrix();            // token 已消耗：矩阵只验规格 + 无新日志
         test_idempotent_reinstall();
         test_skip_paths();
 

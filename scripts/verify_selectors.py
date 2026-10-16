@@ -88,7 +88,7 @@ FEATURE_HOOKS = [
     # 「我的」积分卡：两个 section 各自的 -layoutViews（post-hook 里再摘 pointsCard）。
     ("BDPanPersonalSpaceAndPointSection", "-", "layoutViews", "v16@0:8"),
     ("BDPanPersonalSpaceSection", "-", "layoutViews", "v16@0:8"),
-    # 热启动空白开屏：只改「该不该展示」这一步的 bool。自有实例方法，
+    # 冷/热启动开屏：只改「该不该展示」这一步的 bool。自有实例方法，
     # self/_cmd + q + @ + @（argc 5，运行期仍由 installer 用 method_getNumberOfArguments 兜底）。
     ("BDNCUIAdvertisesManage", "-", "needToShowSplashWithLaunchType:launchUrl:launchOptions:",
      "B40@0:8q16@24@32"),
