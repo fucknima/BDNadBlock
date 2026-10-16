@@ -92,6 +92,11 @@ FEATURE_HOOKS = [
     # self/_cmd + q + @ + @（argc 5，运行期仍由 installer 用 method_getNumberOfArguments 兜底）。
     ("BDNCUIAdvertisesManage", "-", "needToShowSplashWithLaunchType:launchUrl:launchOptions:",
      "B40@0:8q16@24@32"),
+    # 传输页推广：一刻相册 gate 有两个宿主类（各自独立安装），下载小游戏引导在 manager 上；
+    # 三条都是 B16@0:8、argc 2 的自有实例方法。
+    ("BDPanTransViewController", "-", "canShowYikeBanner", "B16@0:8"),
+    ("BDPanTransferFileTransListViewController", "-", "canShowYikeBanner", "B16@0:8"),
+    ("BDPanTransIdleGameManager", "-", "canTransIdleGameWidgetShow", "B16@0:8"),
 ]
 
 # **依赖** accessor：hook 自己不发消息，是安装前只读校验的对象（校验不过就整条跳过）。

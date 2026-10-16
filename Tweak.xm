@@ -129,6 +129,8 @@ static BOOL BDRemovePersonalBanner(void) { return BDNadPrefsActive(@"BDRemovePer
 static BOOL BDRemoveRenewButton(void)   { return BDNadPrefsActive(@"BDRemoveRenewButton"); }
 static BOOL BDRemovePersonalPromotions(void) { return BDNadPrefsActive(@"BDRemovePersonalPromotions"); }
 static BOOL BDRemoveTaskCard(void)      { return BDNadPrefsActive(@"BDRemoveTaskCard"); }
+static BOOL BDRemoveTransferGamePromo(void) { return BDNadPrefsActive(@"BDRemoveTransferGamePromo"); }
+static BOOL BDRemoveTransferYikePromo(void) { return BDNadPrefsActive(@"BDRemoveTransferYikePromo"); }
 // 广告展示拦截（旧 18 条 no-op 与热启动空白开屏闸门共用这一个开关）
 static BOOL BDAdMethodsEnabled(void)   { return BDNadPrefsActive(@"BDNadBlockAdMethods"); }
 
@@ -144,6 +146,7 @@ static BOOL BDBlockNetwork(void) {
 //   PersonalRemoval.h「我的」活动轮播 + 推广整排（同样复用安装器；后续 promo 往这里追加）
 //   PersonalViewRemoval.h「我的」任务卡 / 金币卡（布局 post-hook + 只读 getter 依赖）
 //   RenewButtonRemoval.h「去续费」按钮可隐藏（不 import UIKit，靠调用方先引入的 UIKit）
+//   TransferPromoRemoval.h 传输页一刻相册行内推广 + 下载小游戏引导（Foundation only）
 //   SettingsMenu.h    提供 BDPresentPurificationSettings（MenuEntry 的依赖）
 //   SearchDataRemoval.h / SearchViewRemoval.h  搜索框数据层与 UI 层清理
 //   MenuEntry.h       设置页入口按钮，依赖上面的菜单入口 + FeatureRemoval 的安装器
@@ -153,6 +156,7 @@ static BOOL BDBlockNetwork(void) {
 #include "PersonalRemoval.h"
 #include "PersonalViewRemoval.h"
 #include "RenewButtonRemoval.h"
+#include "TransferPromoRemoval.h"
 #include "SettingsMenu.h"
 #include "SearchDataRemoval.h"
 #include "SearchViewRemoval.h"
@@ -455,6 +459,7 @@ static void BDNadBlockInit(void) {
     // 精准 feature hook 与搜索/入口 hook 都在这里同步装完（不走下面的 1.5s / 3s 定时器）。
     // 只有冷启动、且这里发生在页面组装之前才生效；真机以 [BDNadFeature] installed 日志为准。
     BDFRInstallAll();
+    BDTPInstallAll();    // 传输页：一刻相册行内推广 + 下载小游戏引导（三条 gate 各自独立安装）
     BDRSInstallAll();    // 热启动空白开屏：-needToShowSplashWithLaunchType:launchUrl:launchOptions: 单条闸门
     BDPRInstallData();   // 「我的」活动轮播 + 推广整排（bannerSwitch -> NO，钱包行高折叠）
     BDPVInstallAll();    // 「我的」任务卡：两条 -layoutViews post-hook（先布局后隐藏，installer 不做 UI 操作）
