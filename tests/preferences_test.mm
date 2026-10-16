@@ -7,7 +7,8 @@
 // 覆盖：规格表键唯一与默认值（续费默认 NO、诊断默认 NO）、旧版 NSString 值被尊重、
 // 不合适类型（容器/日期）退默认不崩、未知 key 读取 fail-closed 且写入被拒、desired 保存后
 // 同一 suite 的新 defaults 实例（**同进程可见性**，不等于已验证真实进程重启/落盘恢复）
-// 能读到、已建快照不随写入改变、下一次快照读到新值、总开关/诊断/独立选项可读。
+// 能读到、已建快照不随写入改变、下一次快照读到新值、总开关/诊断/独立选项可读、
+// 传输页两个新键的默认值/独立保存/快照语义，以及未接线键（办卡）查表为 NULL。
 //
 // 构建运行（macOS，无需 IPA，无需 Theos）：
 //   clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
@@ -37,6 +38,7 @@ static NSString *const kExpectedKeys[] = {
     @"BDRemoveGameCenter", @"BDRemovePersonalPromotions",
     @"BDRemovePersonalBanner", @"BDRemoveTaskCard", @"BDRemoveRenewButton",
     @"BDNadBlockNetwork", @"BDNadBlockAdMethods",
+    @"BDRemoveTransferYikePromo", @"BDRemoveTransferGamePromo",
     @"BDNadBlockDumpOnly",
 };
 
@@ -66,6 +68,13 @@ static void TestDefaults(void) {
     CHECK(BDNadPrefsSpecForKey(@"BDRemoveRenewButton")->defaultValue == NO);    // 续费按钮默认保留
     CHECK(BDNadPrefsSpecForKey(@"BDNadBlockDumpOnly")->defaultValue == NO);     // 默认不做仅诊断
     CHECK(BDNadPrefsSpecForKey(@"BDNadBlockAdMethods")->defaultValue == YES);
+    // 传输页两个新键：显式核对默认 YES 与广告分组（位次已由上面的固定清单逐位校验）。
+    CHECK(BDNadPrefsSpecForKey(@"BDRemoveTransferYikePromo")->defaultValue == YES);
+    CHECK(BDNadPrefsSpecForKey(@"BDRemoveTransferGamePromo")->defaultValue == YES);
+    CHECK(BDNadPrefsSpecForKey(@"BDRemoveTransferYikePromo")->group == BDNadPrefsGroupAds);
+    CHECK(BDNadPrefsSpecForKey(@"BDRemoveTransferGamePromo")->group == BDNadPrefsGroupAds);
+    // 未接线的办卡键**不在**规格表里：查表得 NULL（fail-closed），别再留无效开关。
+    CHECK(BDNadPrefsSpecForKey(@"BDRemoveTransferCardPromo") == NULL);
     for (NSUInteger i = 0; i < BDNadPrefsSpecCount; i++) {
         NSString *k = @(BDNadPrefsSpecs[i].key);
         if ([k isEqualToString:@"BDRemoveRenewButton"] || [k isEqualToString:@"BDNadBlockDumpOnly"]) continue;
@@ -161,10 +170,36 @@ int main(void) {
         CHECK(BDNadPrefsDesired(reopened, @"BDNadBlockAdMethods") == YES);
         CHECK(BDNadPrefsDesired(reopened, @"BDRemoveAITab") == YES);
 
+        // 传输页两个新广告键：未写过就是默认 YES，且两个互相独立。
+        CHECK(BDNadPrefsDesired(reopened, @"BDRemoveTransferYikePromo") == YES);
+        CHECK(BDNadPrefsDesired(reopened, @"BDRemoveTransferGamePromo") == YES);
+
+        // 只把一刻相册那个关掉：小游戏那个不受影响。
+        CHECK(BDNadPrefsSetDesired(reopened, @"BDRemoveTransferYikePromo", NO) == YES);
+        CHECK(BDNadPrefsDesired(reopened, @"BDRemoveTransferYikePromo") == NO);
+        CHECK(BDNadPrefsDesired(reopened, @"BDRemoveTransferGamePromo") == YES);
+
+        // 快照语义：已建的那份不变，下一次构造（= 下次冷启动的读法）才看到新值。
+        NSDictionary<NSString *, NSNumber *> *transferBefore = BDNadPrefsSnapshot(reopened);
+        CHECK(transferBefore[@"BDRemoveTransferYikePromo"].boolValue == NO);
+        CHECK(transferBefore[@"BDRemoveTransferGamePromo"].boolValue == YES);
+        CHECK(BDNadPrefsSetDesired(reopened, @"BDRemoveTransferGamePromo", NO) == YES);
+        CHECK(transferBefore[@"BDRemoveTransferGamePromo"].boolValue == YES);   // 旧快照是 immutable 的
+        CHECK(transferBefore[@"BDRemoveTransferYikePromo"].boolValue == NO);
+        NSDictionary<NSString *, NSNumber *> *transferAfter = BDNadPrefsSnapshot(reopened);
+        CHECK(transferAfter[@"BDRemoveTransferYikePromo"].boolValue == NO);     // 上一次保存的值
+        CHECK(transferAfter[@"BDRemoveTransferGamePromo"].boolValue == NO);
+
+        // 保存后同 suite 的新 defaults 实例读到已保存值（只证明同进程可见性，不是已验重启）。
+        NSUserDefaults *transferReopened = [[NSUserDefaults alloc] initWithSuiteName:suiteName];
+        CHECK(BDNadPrefsDesired(transferReopened, @"BDRemoveTransferYikePromo") == NO);
+        CHECK(BDNadPrefsDesired(transferReopened, @"BDRemoveTransferGamePromo") == NO);
+
         // 清理：只删本次测试 owned 的 suite，不碰真实域。
         [d removePersistentDomainForName:suiteName];
         CHECK(BDNadPrefsDesired(d, @"BDNadBlockDumpOnly") == NO);   // 删完回到规格默认（证明域确实被清）
         CHECK(BDNadPrefsDesired(d, @"BDNadBlockEnabled") == YES);
+        CHECK(BDNadPrefsDesired(d, @"BDRemoveTransferYikePromo") == YES);   // 新键同样回到默认 YES
     }
 
     if (gFailures == 0) {
