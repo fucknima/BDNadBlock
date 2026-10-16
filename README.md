@@ -171,10 +171,10 @@ App 升级后必须重跑 `verify_selectors.py`：selector 失效会直接报出
 
 **CI**：`gh workflow run Build --ref <branch>`（或 Actions 页手动 dispatch）。它跑上面那些
 host 测试、UIKit `-fsyntax-only` 编译、再用 Theos 出 dylib；只有 `main` 分支产出可下载 artifact。
-传输页这两项（一刻相册 + 下载小游戏引导）的功能代码**已接线**；**上一验证提交 `4d4db14` 的
+传输页这两项（一刻相册 + 下载小游戏引导）的功能代码**已接线**；**收尾提交 `90ff662` 的
 10 组 Foundation 机制测试（含传输页真值表矩阵）、UIKit strict syntax 与 arm64 / arm64e 双架构构建已通过**：
-<https://github.com/fucknima/BDNadBlock/actions/runs/38872909039>。
-本次偏好规格收尾（移除未接线的办卡键）之后**仍需复跑 CI**；验证分支**没有可下载 artifact**，
+<https://github.com/fucknima/BDNadBlock/actions/runs/38888485278>。
+该提交已移除未接线的办卡键；验证分支**没有可下载 artifact**，
 等 `main` 成功才发布。这些都只是**编译与机制**层面的证据：**真机效果未验，编译与机制测试都不等于真机生效。**
 
 ## 防崩
