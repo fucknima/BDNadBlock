@@ -132,6 +132,7 @@ static BOOL BDRemoveTaskCard(void)      { return BDNadPrefsActive(@"BDRemoveTask
 static BOOL BDRemoveTransferGamePromo(void) { return BDNadPrefsActive(@"BDRemoveTransferGamePromo"); }
 static BOOL BDRemoveTransferYikePromo(void) { return BDNadPrefsActive(@"BDRemoveTransferYikePromo"); }
 static BOOL BDRemoveTransferCardPromo(void) { return BDNadPrefsActive(@"BDRemoveTransferCardPromo"); }
+static BOOL BDExperimentHideHomeBanner(void) { return BDNadPrefsActive(@"BDExperimentHideHomeBanner"); }
 // 广告展示拦截（旧 18 条 no-op 与热启动空白开屏闸门共用这一个开关）
 static BOOL BDAdMethodsEnabled(void)   { return BDNadPrefsActive(@"BDNadBlockAdMethods"); }
 
@@ -148,6 +149,7 @@ static BOOL BDBlockNetwork(void) {
 //   PersonalViewRemoval.h「我的」任务卡 / 金币卡（布局 post-hook + 只读 getter 依赖）
 //   RenewButtonRemoval.h「去续费」按钮可隐藏（不 import UIKit，靠调用方先引入的 UIKit）
 //   TransferPromoRemoval.h 一刻相册行内推广 + 下载小游戏引导 + 免流办卡（Foundation only）
+//   HomeBannerExperiment.h 首页顶部横幅容器·实验（默认关闭；候选 _bannerView 定点隐藏）
 //   SettingsMenu.h    提供 BDPresentPurificationSettings（MenuEntry 的依赖）
 //   SearchDataRemoval.h / SearchViewRemoval.h  搜索框数据层与 UI 层清理
 //   MenuEntry.h       设置页入口按钮，依赖上面的菜单入口 + FeatureRemoval 的安装器
@@ -158,6 +160,7 @@ static BOOL BDBlockNetwork(void) {
 #include "PersonalViewRemoval.h"
 #include "RenewButtonRemoval.h"
 #include "TransferPromoRemoval.h"
+#include "HomeBannerExperiment.h"   // 首页顶部横幅容器实验：独立开关、默认关闭、可回退
 #include "SettingsMenu.h"
 #include "SearchDataRemoval.h"
 #include "SearchViewRemoval.h"
@@ -460,6 +463,7 @@ static void BDNadBlockInit(void) {
     // 精准 feature hook 与搜索/入口 hook 都在这里同步装完（不走下面的 1.5s / 3s 定时器）。
     // 只有冷启动、且这里发生在页面组装之前才生效；真机以 [BDNadFeature] installed 日志为准。
     BDFRInstallAll();
+    BDHBInstallAll();    // 首页顶部横幅容器·实验（默认关闭；装好也不改行为，开关关闭时原样透传）
     BDTPInstallAll();    // 一刻相册行内推广 / 下载小游戏引导 / 免流办卡：三条 bool + 一条 Q 类型选择，各自独立安装
     BDRSInstallAll();    // 热启动空白开屏：-needToShowSplashWithLaunchType:launchUrl:launchOptions: 单条闸门
     BDPRInstallData();   // 「我的」活动轮播 + 推广整排（bannerSwitch -> NO，钱包行高折叠）

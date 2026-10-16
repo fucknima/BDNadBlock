@@ -45,6 +45,7 @@ static BOOL BDRemoveTaskCard(void)      { return BDNadPrefsActive(@"BDRemoveTask
 static BOOL BDRemoveTransferGamePromo(void) { return BDNadPrefsActive(@"BDRemoveTransferGamePromo"); }
 static BOOL BDRemoveTransferYikePromo(void) { return BDNadPrefsActive(@"BDRemoveTransferYikePromo"); }
 static BOOL BDRemoveTransferCardPromo(void) { return BDNadPrefsActive(@"BDRemoveTransferCardPromo"); }
+static BOOL BDExperimentHideHomeBanner(void) { return BDNadPrefsActive(@"BDExperimentHideHomeBanner"); }
 static BOOL BDAdMethodsEnabled(void)    { return BDNadPrefsActive(@"BDNadBlockAdMethods"); }
 
 #pragma mark - 产品 header（顺序就是它们之间的单向依赖，别调换）
@@ -56,6 +57,7 @@ static BOOL BDAdMethodsEnabled(void)    { return BDNadPrefsActive(@"BDNadBlockAd
 // PersonalViewRemoval.h「我的」任务卡 / 金币卡（布局 post-hook + 只读 getter 依赖）
 // RenewButtonRemoval.h「去续费」按钮可隐藏（不 import UIKit，用本文件顶部的真实 UIKit 声明）
 // TransferPromoRemoval.h 一刻相册行内推广 + 下载小游戏引导 + 免流办卡（Foundation only）
+// HomeBannerExperiment.h 首页顶部横幅容器·实验（UIKit 由本文件顶部 import 提供；默认关闭）
 // SearchDataRemoval.h / SearchViewRemoval.h 搜索框数据层与 UI 层（必须在 FeatureRemoval.h 之后）
 // MenuEntry.h      设置页入口按钮（需要菜单入口 + 安装器）
 // ResumeSplashRemoval.h 热启动空白开屏展示闸门（在 FeatureRemoval.h 之后，用 BDAdMethodsEnabled）
@@ -66,6 +68,7 @@ static BOOL BDAdMethodsEnabled(void)    { return BDNadPrefsActive(@"BDNadBlockAd
 #include "PersonalViewRemoval.h"
 #include "RenewButtonRemoval.h"
 #include "TransferPromoRemoval.h"
+#include "HomeBannerExperiment.h"
 #include "SearchDataRemoval.h"
 #include "SearchViewRemoval.h"
 #include "MenuEntry.h"
@@ -77,6 +80,7 @@ static BOOL BDAdMethodsEnabled(void)    { return BDNadPrefsActive(@"BDNadBlockAd
 // 各调一次，让上面列出的每个 header 里全部 static 函数/安装器都被引用到。
 void BDNadUICompileCheck(UIViewController *host, NSURL *logURL) {
     BDFRInstallAll();                        // 首页推荐/游戏中心/金刚区求职小说
+    BDHBInstallAll();                        // 首页顶部横幅容器·实验（默认关闭）
     BDTPInstallAll();                        // 传输页一刻相册行内推广 + 下载小游戏引导
     BDPRInstallData();                       // 「我的」活动轮播 + 推广整排
     BDPVInstallAll();                        // 「我的」任务卡两条 -layoutViews

@@ -17,7 +17,7 @@
 - 这些 header 都是单 TU header（内部 `static`），`Tweak.xm` 里各 include 一次即可。
 - 当前 `Tweak.xm` 的实际 include 顺序（依赖单向，别调换）：
   `Preferences.h` → `FeatureRemoval.h` → `TabRemoval.h` → `PersonalRemoval.h` →
-  `PersonalViewRemoval.h` → `RenewButtonRemoval.h` → `TransferPromoRemoval.h` → **`SettingsMenu.h`** →
+  `PersonalViewRemoval.h` → `RenewButtonRemoval.h` → `TransferPromoRemoval.h` → `HomeBannerExperiment.h` → **`SettingsMenu.h`** →
   `SearchDataRemoval.h` → `SearchViewRemoval.h` → **`MenuEntry.h`** → `ResumeSplashRemoval.h` → `NetworkRules.h`。
 - 不要新增 `FILES`/`Frameworks`：`UIKit` 已在 `Makefile`，这些 header 不算编译单元。
 
@@ -32,6 +32,7 @@
 | `BDRemoveJobNovel` | 隐藏求职/小说入口 | YES | 首页 |
 | `BDRemoveSearchPromo` | 隐藏搜索推广词 | YES | 首页 |
 | `BDRemoveSearchAI` | 隐藏搜索框AI按钮 | YES | 首页 |
+| `BDExperimentHideHomeBanner` | 隐藏顶部横幅容器·实验 | **NO** | 首页 |
 | `BDRemoveGameCenter` | 隐藏游戏中心 | YES | 我的 |
 | `BDRemovePersonalPromotions` | 隐藏推广入口整排 | YES | 我的 |
 | `BDRemovePersonalBanner` | 隐藏活动轮播 | YES | 我的 |
@@ -50,7 +51,7 @@
 
 `BDRemoveHomePromo`（首页年卡促销）**功能本版未实施**：静态定位未收束，用户选择先做其它项。
 菜单里那一行只呈现副标题「待定位，本版本暂时保留」，没有 `UISwitch`、不读也不写该键的
-saved 值 —— 免得显示成「默认 YES 已生效」。规格表现有 18 个键，旧 17 个键与默认值不变，
+saved 值 —— 免得显示成「默认 YES 已生效」。规格表现有 19 个键，旧 18 个键与默认值不变，
 其中这一个的默认 YES **只是保留配置**；启动日志里 `active BDRemoveHomePromo = 1`
 也只是快照值，**不是该功能已接线的证据**。等定位收束后再接上真实开关。
 
@@ -62,6 +63,14 @@ unsigned 值原样透传）。该 widget gate 只覆盖这一处判定：`refres
 该页实际是否进入办卡分支未验证，不能断言只影响传输页。企业 manager 自有同名实现未被替换；企业版孪生 widget 与企业版一刻相册
 都不在本版范围内（企业 Yike 的 base gate 实测直接 `mov 0` 返回，这条边界保留未处理）。
 截图与运行实例之间**没有真机证据**：文案与分支只做到静态对应，设备效果未验。
+
+首页顶部横幅容器是**独立实验项**（`BDExperimentHideHomeBanner`，默认 **NO**，首页分组）：
+它**不是** `BDRemoveHomePromo` 的开关，也不改那行的说明文案。用户自行开启（我的 → 设置 → 网盘净化，
+「隐藏顶部横幅容器·实验」）后彻底退出重开才生效；回退就是关掉后冷启动，或装回旧库。
+只对 `BDPanNewMSHTopOperationView` 自己的候选 `_bannerView` 定点 `setHidden:YES`（原 `setup` 先调一次），
+不全局 hook `UIView`、不隐藏整个 TopOperation、不改父容器/约束/数据/网络，也不写死地址/坐标/尺寸。
+**状态：已实现，机制与SDK编译通过，真机效果未验证**；候选identity未证实，可能无效或留白。
+初始化完成后才尝试隐藏，并在检查时保护9个已知正常控件；守卫通过机制测试不代表已验证所有异步UI变化。
 
 ## 3. 函数名（主会话按这些接线）
 
@@ -144,12 +153,14 @@ present 之前还有主线程/modal 守卫，守卫拒绝时菜单不会出现�
   ```
   以及 `tests/ui_compile.mm` 的 iOS SDK `-fsyntax-only` 编译（覆盖 UIKit 声明）。
   跑法与最新结果见 README「怎么复核」。
-- **CI 通过 ≠ 真机生效**：已发布基线是 `main` 的 `7e4d8e92`（CI run `38888673604`）：
+- **CI 通过 ≠ 真机生效**：已发布基线是 `main` 的 `664a722`（CI run `38891349121`）：
   10 组 Foundation 机制测试 + UIKit strict syntax + arm64/arm64e 双架构构建全部通过，
-  该版本只含一刻相册与下载小游戏两项，**不含免流办卡开关**；验证分支**没有可下载 artifact**，
-  等 `main` 成功才发布。免流办卡 gate 的提交 `1e869d5` 已通过
+  验证分支**没有可下载 artifact**，等 `main` 成功才发布。免流办卡 gate 的提交 `1e869d5` 已通过
   [CI 38890609380](https://github.com/fucknima/BDNadBlock/actions/runs/38890609380) 的10组机制测试、
-  UIKit严格编译及双架构构建；**办卡条真机效果仍未验证**。这些只是**编译与机制**层面的证据。
+  UIKit严格编译及双架构构建；**办卡条真机效果仍未验证**。
+  首页横幅容器实验提交 `d080dad` 的[CI 38905984074](https://github.com/fucknima/BDNadBlock/actions/runs/38905984074)
+  已通过11组host机制测试、真实UIKit严格编译及双架构构建，真机效果仍未验证 ——
+  这些都只是**编译与机制**层面的证据。
 - **真机 UI 仍未验证**：菜单是否出现在真实设置页、开关是否可切、分享面板、
   冷启动后是否真的生效，都要装包后人工确认。
 - **持久化未跨进程验证**：host 测试里“新 defaults 实例读到已保存值”只是**同进程 suite

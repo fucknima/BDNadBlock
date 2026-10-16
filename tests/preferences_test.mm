@@ -8,7 +8,8 @@
 // 不合适类型（容器/日期）退默认不崩、未知 key 读取 fail-closed 且写入被拒、desired 保存后
 // 同一 suite 的新 defaults 实例（**同进程可见性**，不等于已验证真实进程重启/落盘恢复）
 // 能读到、已建快照不随写入改变、下一次快照读到新值、总开关/诊断/独立选项可读、
-// 传输页三个新键的默认值/独立保存/快照语义（含办卡键不再是无规格表的未接线键）。
+// 传输页三个新键的默认值/独立保存/快照语义（含办卡键不再是无规格表的未接线键）；
+// 首页横幅容器实验键默认 NO、保存后旧快照不变/新快照可见、与旧键互不影响。
 //
 // 构建运行（macOS，无需 IPA，无需 Theos）：
 //   clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
@@ -35,6 +36,7 @@ static NSString *const kExpectedKeys[] = {
     @"BDNadBlockEnabled",
     @"BDRemoveRecommend", @"BDRemoveHomePromo", @"BDRemoveAITab",
     @"BDRemoveJobNovel", @"BDRemoveSearchPromo", @"BDRemoveSearchAI",
+    @"BDExperimentHideHomeBanner",
     @"BDRemoveGameCenter", @"BDRemovePersonalPromotions",
     @"BDRemovePersonalBanner", @"BDRemoveTaskCard", @"BDRemoveRenewButton",
     @"BDNadBlockNetwork", @"BDNadBlockAdMethods",
@@ -67,6 +69,9 @@ static void TestDefaults(void) {
     CHECK(BDNadPrefsSpecForKey(@"BDNadBlockEnabled")->defaultValue == YES);
     CHECK(BDNadPrefsSpecForKey(@"BDRemoveRenewButton")->defaultValue == NO);    // 续费按钮默认保留
     CHECK(BDNadPrefsSpecForKey(@"BDNadBlockDumpOnly")->defaultValue == NO);     // 默认不做仅诊断
+    // 首页顶部横幅容器实验：默认关闭、首页分组，**不是**年卡成品。
+    CHECK(BDNadPrefsSpecForKey(@"BDExperimentHideHomeBanner")->defaultValue == NO);
+    CHECK(BDNadPrefsSpecForKey(@"BDExperimentHideHomeBanner")->group == BDNadPrefsGroupHome);
     CHECK(BDNadPrefsSpecForKey(@"BDNadBlockAdMethods")->defaultValue == YES);
     // 传输页三个新键：显式核对默认 YES 与广告分组（位次已由上面的固定清单逐位校验）。
     CHECK(BDNadPrefsSpecForKey(@"BDRemoveTransferYikePromo")->defaultValue == YES);
@@ -75,9 +80,12 @@ static void TestDefaults(void) {
     CHECK(BDNadPrefsSpecForKey(@"BDRemoveTransferYikePromo")->group == BDNadPrefsGroupAds);
     CHECK(BDNadPrefsSpecForKey(@"BDRemoveTransferGamePromo")->group == BDNadPrefsGroupAds);
     CHECK(BDNadPrefsSpecForKey(@"BDRemoveTransferCardPromo")->group == BDNadPrefsGroupAds);
+    // 默认 NO 的三个例外：续费按钮、仅诊断、以及首页横幅容器实验项（默认关闭）。
     for (NSUInteger i = 0; i < BDNadPrefsSpecCount; i++) {
         NSString *k = @(BDNadPrefsSpecs[i].key);
-        if ([k isEqualToString:@"BDRemoveRenewButton"] || [k isEqualToString:@"BDNadBlockDumpOnly"]) continue;
+        if ([k isEqualToString:@"BDRemoveRenewButton"] ||
+            [k isEqualToString:@"BDNadBlockDumpOnly"] ||
+            [k isEqualToString:@"BDExperimentHideHomeBanner"]) continue;
         CHECK(BDNadPrefsSpecs[i].defaultValue == YES);
     }
 }
@@ -202,12 +210,34 @@ int main(void) {
         CHECK(BDNadPrefsDesired(transferReopened, @"BDRemoveTransferGamePromo") == NO);
         CHECK(BDNadPrefsDesired(transferReopened, @"BDRemoveTransferCardPromo") == NO);
 
+        // 首页横幅容器实验键：默认 NO；保存 YES 后旧快照不变，下一次快照（= 下次冷启动的读法）才看到。
+        CHECK(BDNadPrefsDesired(reopened, @"BDExperimentHideHomeBanner") == NO);   // 未写过 = 默认关闭
+        NSDictionary<NSString *, NSNumber *> *experimentBefore = BDNadPrefsSnapshot(reopened);
+        CHECK(experimentBefore[@"BDExperimentHideHomeBanner"].boolValue == NO);
+        CHECK(BDNadPrefsSetDesired(reopened, @"BDExperimentHideHomeBanner", YES) == YES);
+        CHECK(experimentBefore[@"BDExperimentHideHomeBanner"].boolValue == NO);    // 旧快照是 immutable 的
+        NSDictionary<NSString *, NSNumber *> *experimentAfter = BDNadPrefsSnapshot(reopened);
+        CHECK(experimentAfter[@"BDExperimentHideHomeBanner"].boolValue == YES);
+        // 实验键独立：它开/关都不动传输页那三个已保存的 NO。
+        CHECK(experimentAfter[@"BDRemoveTransferYikePromo"].boolValue == NO);
+        CHECK(experimentAfter[@"BDRemoveTransferGamePromo"].boolValue == NO);
+        CHECK(experimentAfter[@"BDRemoveTransferCardPromo"].boolValue == NO);
+        // 同 suite 新实例读到 YES（同进程可见性，不是已验重启）；再关回去只影响它自己。
+        NSUserDefaults *experimentReopened = [[NSUserDefaults alloc] initWithSuiteName:suiteName];
+        CHECK(BDNadPrefsDesired(experimentReopened, @"BDExperimentHideHomeBanner") == YES);
+        CHECK(BDNadPrefsSetDesired(experimentReopened, @"BDExperimentHideHomeBanner", NO) == YES);
+        CHECK(BDNadPrefsDesired(experimentReopened, @"BDExperimentHideHomeBanner") == NO);
+        CHECK(BDNadPrefsDesired(experimentReopened, @"BDRemoveTransferYikePromo") == NO);
+        CHECK(BDNadPrefsDesired(experimentReopened, @"BDRemoveTransferGamePromo") == NO);
+        CHECK(BDNadPrefsDesired(experimentReopened, @"BDRemoveTransferCardPromo") == NO);
+
         // 清理：只删本次测试 owned 的 suite，不碰真实域。
         [d removePersistentDomainForName:suiteName];
         CHECK(BDNadPrefsDesired(d, @"BDNadBlockDumpOnly") == NO);   // 删完回到规格默认（证明域确实被清）
         CHECK(BDNadPrefsDesired(d, @"BDNadBlockEnabled") == YES);
         CHECK(BDNadPrefsDesired(d, @"BDRemoveTransferYikePromo") == YES);   // 新键同样回到默认 YES
         CHECK(BDNadPrefsDesired(d, @"BDRemoveTransferCardPromo") == YES);
+        CHECK(BDNadPrefsDesired(d, @"BDExperimentHideHomeBanner") == NO);   // 实验键删域后回默认「关闭」
     }
 
     if (gFailures == 0) {
