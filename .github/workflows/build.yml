@@ -84,8 +84,19 @@ jobs:
             -framework Foundation -o "$bin" tests/renew_button_test.mm
           "$bin"
 
+      # PersonalViewRemoval.h 的机制测试（自带最小 fake UIView 只为测机制）。
+      # 这不是真机测试、也不是 UI 运行测试：真 UIKit 声明由上面 ui_compile 那步编译覆盖。
+      - name: Host test (PersonalViewRemoval.h, clang++, not a device test)
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/task_card_test"
+          clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
+            -framework Foundation -o "$bin" tests/task_card_test.mm
+          "$bin"
+
       # UIKit 组件的编译检查：SettingsMenu / FeatureRemoval / TabRemoval / PersonalRemoval /
-      # RenewButtonRemoval / SearchDataRemoval / SearchViewRemoval / MenuEntry 八个产品 header，
+      # PersonalViewRemoval / RenewButtonRemoval / SearchDataRemoval / SearchViewRemoval /
+      # MenuEntry 九个产品 header，
       # 用真实 iOS SDK 过一遍 -Werror，并由 tests/ui_compile.mm 里的最小调用 TU
       # 把每个入口都引用到（不靠 -Wno、不删函数）。
       # 仅 -fsyntax-only：不运行、不产出 app、不启模拟器、不建工程，不是 UI 运行测试。
