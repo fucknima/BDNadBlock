@@ -7,8 +7,9 @@
 //   - BDFRInstallAll() 会引用这些假开关，但旧三个 hook 的类/方法在这里不存在，会逐条 skip；
 //     它**不会**碰 bannerSwitch（那由 BDPRInstallData 单独装）。
 // 动态 fake 类 BDPanPersonalConfig 的元类上注册 bannerSwitch（B 编码），原返回值与调用次数可调；
-// 另有两个 fake 类 BDPanPersonalWalletSection / BDPanPersonalCenterWalletSection，各自注册
-// 真实的 -heightForView（d16@0:8），原返回值与调用次数可调 —— 用来验证推广整排的收起值透传。
+// 另有三个 fake 类 BDPanPersonalWalletSection / BDPanPersonalCenterWalletSection /
+// BDPanOperationSpaceSection，各自注册真实的 -heightForView（d16@0:8），原返回值与调用次数可调
+// —— 前两条验证推广整排的收起值透传，第三条验证运营位「原实现先调一次再改判 -6.0」的机制。
 //
 // 这不是真机测试：只证明「安装前透传原值 / 开关组合决定是否抑制 / 关闭时逐次透传原实现 /
 // 幂等不递归不自指 / 签名或类不符就 skip」。真机上「轮播与推广整排真的不再显示、请求是否归零」
@@ -156,6 +157,29 @@ static void setup_wallet_classes(void) {
                           (IMP)PhCenterWalletHeight, "d16@0:8"));
 }
 
+// 运营位（活动卡 + 广告卡混合段）：真实类名 + 真实 -heightForView（d16@0:8）。
+// 真机上它只返回 54.0 / 84.0（由 shouldShowAdvertisementCard 二选一）；测试可取 -6.0
+// 来验证「原生已经是收起值时不再假记 hit」。
+static double gOperationOrigResult = 54.0;
+static unsigned gOperationOrigCalls = 0;
+static id gOperationSeenReceiver = nil;
+static SEL gOperationSeenSEL = NULL;
+
+static double PhOperationHeight(id self, SEL _cmd) {
+    gOperationOrigCalls++;
+    gOperationSeenReceiver = self;
+    gOperationSeenSEL = _cmd;
+    return gOperationOrigResult;
+}
+
+static Class gOperationSection;
+
+static void setup_operation_class(void) {
+    gOperationSection = BDPRMakeClass("BDPanOperationSpaceSection", Nil);
+    CHECK(class_addMethod(gOperationSection, sel_registerName("heightForView"),
+                          (IMP)PhOperationHeight, "d16@0:8"));
+}
+
 #pragma mark - 测试
 
 static void test_before_install(void) {
@@ -185,6 +209,18 @@ static void test_before_install(void) {
     CHECK(BDPRSendInstanceDouble(centerBefore, hsel) == 120.0);
     CHECK(gCenterWalletOrigCalls == 1);
 
+    // 运营位也一样：安装前就是原返回值（真机常态 54 / 84），每次只调一次原实现。
+    id operationBefore = [[gOperationSection alloc] init];
+    CHECK(BDPRSpecOperationHeight.installed == NO);
+    gOperationOrigCalls = 0;
+    gOperationOrigResult = 54.0;
+    CHECK(BDPRSendInstanceDouble(operationBefore, hsel) == 54.0);
+    CHECK(gOperationOrigCalls == 1);
+    gOperationOrigResult = 84.0;
+    CHECK(BDPRSendInstanceDouble(operationBefore, hsel) == 84.0);
+    CHECK(gOperationOrigCalls == 2);
+    gOperationOrigResult = 54.0;
+
     // 旧三个 hook 的类不存在：BDFRInstallAll() 逐条 skip，且绝不碰 bannerSwitch 与 wallet 两条
     unsigned logsBefore = gLogLines;
     BDFRInstallAll();
@@ -193,8 +229,10 @@ static void test_before_install(void) {
     CHECK(gBannerOrigCalls == 2);                         // 安装过程不调用任何替换实现
     CHECK(BDPRSpecWalletHeight.installed == NO);
     CHECK(BDPRSpecCenterWalletHeight.installed == NO);
+    CHECK(BDPRSpecOperationHeight.installed == NO);
     CHECK(gWalletOrigCalls == 1);
     CHECK(gCenterWalletOrigCalls == 1);
+    CHECK(gOperationOrigCalls == 2);
 }
 
 static void test_install_and_gate(void) {
@@ -205,9 +243,15 @@ static void test_install_and_gate(void) {
     CHECK(*BDPRSpecBannerSwitch.orig == (IMP)PhBannerSwitch);   // orig 存的是原实现
     CHECK(method_getImplementation(class_getClassMethod(gPersonalCfg, sel))
           == (IMP)BDPRBannerSwitch);
-    // 一行 installed（banner）+ 本轮新增的两条 wallet installed = 3 行。
-    // 本次只改了这条计数：BDPRInstallData 现在一次装三条 spec，断言语义（透传/抑制/幂等/自指）一字未动。
-    CHECK(gLogLines == logsBefore + 3);
+    // 一行 installed（banner）+ 本轮新增的两条 wallet installed + 运营位一条 = 4 行。
+    // 本次只改了这条计数：BDPRInstallData 现在一次装四条 spec，断言语义（透传/抑制/幂等/自指）一字未动。
+    CHECK(gLogLines == logsBefore + 4);
+    CHECK(BDPRSpecOperationHeight.installed == YES);
+    CHECK(*BDPRSpecOperationHeight.orig == (IMP)PhOperationHeight);   // orig 存的是原实现，不自指
+    CHECK(*BDPRSpecOperationHeight.orig != (IMP)BDPROperationHeight);
+    CHECK(method_getImplementation(class_getInstanceMethod(gOperationSection,
+                                                           sel_registerName("heightForView")))
+          == (IMP)BDPROperationHeight);
 
     // 1) 三个开关都开 + 原实现本来说 true -> 被抑制成 false，且只打一行 hit
     gBannerOrigResult = true;
@@ -348,6 +392,59 @@ static void test_skip_paths(void) {
     CHECK(BDFRInstallSpec(&s7) == NO);
     CHECK(s7.installed == NO);
     CHECK(origWalletMissing == NULL);
+
+    // 8) 运营位：签名不符（真注册 d32@0:8，spec 期望 d16@0:8）-> 不装
+    Class wrongOp = BDPRMakeClass("BDPRPhantomOperationWrongEnc", Nil);
+    CHECK(class_addMethod(wrongOp, sel_registerName("heightForView"),
+                          (IMP)PhOperationHeight, "d32@0:8"));
+    IMP origOpEnc = NULL;
+    BDFRSpec s8 = BDPRTestSpec("BDPRPhantomOperationWrongEnc", "heightForView", NO,
+                               "d16@0:8", 2, (IMP)BDPROperationHeight, &origOpEnc,
+                               "t-operation-wrong-enc");
+    CHECK(BDFRInstallSpec(&s8) == NO);
+    CHECK(s8.installed == NO);
+    CHECK(origOpEnc == NULL);
+
+    // 9) 运营位：argc 不符（指向已注册的真类，只把 argc 描述成 3）-> 不装
+    IMP origOpArgc = NULL;
+    BDFRSpec s9 = BDPRTestSpec("BDPanOperationSpaceSection", "heightForView", NO,
+                               "d16@0:8", 3, (IMP)BDPROperationHeight, &origOpArgc,
+                               "t-operation-wrong-argc");
+    CHECK(BDFRInstallSpec(&s9) == NO);
+    CHECK(s9.installed == NO);
+    CHECK(origOpArgc == NULL);
+
+    // 10) 运营位：只有父类实现 -> 不装（子类解析到的仍是父类实现，父类槽没被动）
+    Class opParent = BDPRMakeClass("BDPRPhantomOperationParent", Nil);
+    CHECK(class_addMethod(opParent, sel_registerName("heightForView"),
+                          (IMP)PhOperationHeight, "d16@0:8"));
+    Class opChild = BDPRMakeClass("BDPRPhantomOperationChild", opParent);
+    IMP origOpInherited = NULL;
+    BDFRSpec s10 = BDPRTestSpec("BDPRPhantomOperationChild", "heightForView", NO,
+                                "d16@0:8", 2, (IMP)BDPROperationHeight, &origOpInherited,
+                                "t-operation-inherited");
+    CHECK(BDFRInstallSpec(&s10) == NO);
+    CHECK(s10.installed == NO);
+    CHECK(origOpInherited == NULL);
+    CHECK(class_getMethodImplementation(opChild, sel_registerName("heightForView"))
+          == (IMP)PhOperationHeight);
+
+    // 11) 运营位：类缺失 -> 不装
+    IMP origOpMissing = NULL;
+    BDFRSpec s11 = BDPRTestSpec("BDPRPhantomOperationMissingClass", "heightForView", NO,
+                                "d16@0:8", 2, (IMP)BDPROperationHeight, &origOpMissing,
+                                "t-operation-missing-class");
+    CHECK(BDFRInstallSpec(&s11) == NO);
+    CHECK(s11.installed == NO);
+    CHECK(origOpMissing == NULL);
+
+    // 以上失败路径都不许影响真实那几条 spec
+    CHECK(BDPRSpecWalletHeight.installed == YES);
+    CHECK(*BDPRSpecWalletHeight.orig == (IMP)PhWalletHeight);
+    CHECK(BDPRSpecOperationHeight.installed == YES);
+    CHECK(*BDPRSpecOperationHeight.orig == (IMP)PhOperationHeight);
+    CHECK(class_getMethodImplementation(gOperationSection, sel_registerName("heightForView"))
+          == (IMP)BDPROperationHeight);
 }
 
 // 推广整排的机制：两个 class 各自的 -heightForView 被强制返回**该 class 自己的原生收起值**
@@ -451,15 +548,105 @@ static void test_promo_row_collapse(void) {
     gEnabled = YES;
 }
 
+#pragma mark - 运营位：原实现先调一次，再按开关改判 -6.0
+
+// 与推广整排不同：这条**永远先调原实现一次**（shouldShowAdvertisementCard 的状态不能跳），
+// 拿到原 double 之后才决定是否改成 -6.0（宿主 +6.0 间距 → 0 行高）；
+// 原生已经是 -6.0 时原样返回、不记 hit。进入本用例时 spec 已装好，token 还没被消耗过。
+static void test_operation_row_collapse(void) {
+    SEL sel = sel_registerName("heightForView");
+    id op = [[gOperationSection alloc] init];
+    CHECK(object_getClass(op) == gOperationSection);
+    CHECK(BDPRSpecOperationHeight.installed == YES);
+    CHECK(*BDPRSpecOperationHeight.orig == (IMP)PhOperationHeight);
+    CHECK(class_getMethodImplementation(gOperationSection, sel) == (IMP)BDPROperationHeight);
+
+    const BOOL bools[2] = {YES, NO};
+    const double origs[3] = {54.0, 84.0, -6.0};        // 两个已核原值 + 前置实现可能返回的目标值
+    unsigned logsBefore = gLogLines;
+    unsigned checked = 0;
+    BOOL hitConsumed = NO;
+
+    // 真 hit 之前，门全开但原实现已返回目标值时也不能消耗 token。
+    gEnabled = YES; gDumpOnly = NO; gRemovePersonalPromotions = YES;
+    gOperationOrigResult = -6.0;
+    unsigned unchangedCalls = gOperationOrigCalls;
+    CHECK(BDPRSendInstanceDouble(op, sel) == -6.0);
+    CHECK(gOperationOrigCalls == unchangedCalls + 1);
+    CHECK(gLogLines == logsBefore);
+
+    for (unsigned e = 0; e < 2; e++)
+    for (unsigned d = 0; d < 2; d++)
+    for (unsigned k = 0; k < 2; k++)
+    for (unsigned o = 0; o < 3; o++) {
+        gEnabled = bools[e]; gDumpOnly = bools[d]; gRemovePersonalPromotions = bools[k];
+        gOperationOrigResult = origs[o];
+        BOOL gate = bools[e] && !bools[d] && bools[k];
+        unsigned callsBefore = gOperationOrigCalls;
+        unsigned logs = gLogLines;
+        gOperationSeenReceiver = nil; gOperationSeenSEL = NULL;
+
+        double want = (gate && origs[o] != -6.0) ? -6.0 : origs[o];
+        double got = BDPRSendInstanceDouble(op, sel);
+        checked++;
+        if (got != want) {
+            fprintf(stderr,
+                    "FAIL %s:%d: operation orig=%.2f enabled=%d dump=%d key=%d -> %.2f (want %.2f)\n",
+                    __FILE__, __LINE__, origs[o], bools[e], bools[d], bools[k], got, want);
+            gFailures++;
+        }
+        CHECK(gOperationOrigCalls == callsBefore + 1);   // 原实现先且只调一次
+        CHECK(gOperationSeenReceiver == op);             // receiver 保真
+        CHECK(gOperationSeenSEL == sel);                 // SEL 保真
+        if (gate && origs[o] != -6.0) {
+            if (!hitConsumed) {                          // 只有第一次真改变记一行
+                CHECK(gLogLines == logs + 1);
+                hitConsumed = YES;
+            } else {
+                CHECK(gLogLines == logs);                // dispatch_once：不再重复
+            }
+        } else {
+            CHECK(gLogLines == logs);                    // 原生 -6.0 / 门控未生效：不假记 hit
+        }
+    }
+    CHECK(checked == 2 * 2 * 2 * 3);                     // 开关 8 组 × 原值 3 个
+    CHECK(hitConsumed == YES);
+    CHECK(gLogLines == logsBefore + 1);
+
+    // 生效时重复多轮：仍是 -6.0、原实现照样每次被调、日志不再增长；原生 -6.0 原样返回
+    gEnabled = YES; gDumpOnly = NO; gRemovePersonalPromotions = YES;
+    gOperationOrigResult = 84.0;
+    for (int i = 0; i < 3; i++) CHECK(BDPRSendInstanceDouble(op, sel) == -6.0);
+    CHECK(gLogLines == logsBefore + 1);
+    gOperationOrigResult = -6.0;
+    CHECK(BDPRSendInstanceDouble(op, sel) == -6.0);
+    CHECK(gLogLines == logsBefore + 1);
+
+    // 幂等：重复安装不动 IMP、orig 不自指；关总开关时透传且只穿一次（不递归）
+    unsigned callsBefore = gOperationOrigCalls;
+    BDPRInstallData();
+    CHECK(BDPRSpecOperationHeight.installed == YES);
+    CHECK(*BDPRSpecOperationHeight.orig == (IMP)PhOperationHeight);
+    CHECK(class_getMethodImplementation(gOperationSection, sel) == (IMP)BDPROperationHeight);
+    CHECK(BDFRResolve(&BDPRSpecOperationHeight) != NULL);
+    gEnabled = NO;
+    CHECK(BDPRSendInstanceDouble(op, sel) == -6.0);      // 原实现当前返回 -6.0，关总开关就透传它
+    CHECK(gOperationOrigCalls == callsBefore + 1);
+    gEnabled = YES;
+    gOperationOrigResult = 54.0;
+}
+
 #pragma mark - main
 
 int main(void) {
     @autoreleasepool {
         setup_wallet_classes();      // 推广整排的两个假类（真实类名 + 真实 d16@0:8）
+        setup_operation_class();     // 运营位的假类（同款 d16@0:8；原实现先调一次那条）
         test_before_install();
         test_install_and_gate();
         test_skip_paths();
         test_promo_row_collapse();
+        test_operation_row_collapse();
 
         printf("%s: %d 项失败（日志共 %u 行）\n",
                gFailures ? "FAIL" : "PASS", gFailures, gLogLines);

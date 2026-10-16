@@ -1,4 +1,4 @@
-// BDNadBlock — 开屏展示判定闸门：冷启动(0) + 热启动(2/3)
+// BDNadBlock — BDNC 冷/热启动开屏闸门 + App Open 冷/热策略
 //
 // 症状：热启动空白开屏，以及用户反馈 13.35.5 冷启动时全屏开屏再次出现。
 // 静态已核 BDNCUIAdvertisesManage 的冷/热启动路径都经过此判定；设备的具体展示链尚未取证。
@@ -16,11 +16,18 @@
 //      不另抄安装器、不建第二套默认值表。
 //   2) 本文件只 import Foundation / objc/runtime，不 import UIKit（这里不碰任何 UI 类）。
 //
-// 唯一一条 hook（**自有实例方法**，在 BDNCUIAdvertisesManage 自己的方法表里）：
+// 三条 hook（都是**自有实例方法**，各自在目标类自己的方法表里）：
 //   -[BDNCUIAdvertisesManage needToShowSplashWithLaunchType:launchUrl:launchOptions:]
 //     encoding "B40@0:8q16@24@32"  argc 5  （self + _cmd + q + @ + @）
+//   -[BDPanAdvertisementStrategy isEnableShowAdForAppColdOpenWithLaunchoptions:] B24@0:8@16 argc 3
+//   -[BDPanAdvertisementStrategy isEnableShowAdForAppHotOpenWithFrom:] B24@0:8q16 argc 3
+// 后两条是 App Open 冷/热策略：两版各查到一个启动广告入口的直接调用点，动态/跨镜像调用未穷尽。
+// 它们返回 false 时原生自己走「不展示」收尾（不建 callback、不碰 handler、不触发调用方 present/dismiss
+// block），与「服务端把该类别关掉」是同一条既有路径。所以只在策略判定层把 true 改 false，
+// 不动展示层、不补回调。热那条只纳入 from ∈ {1,2,3,4}（-keyForAppHotOpenWithFrom: 的字面量表
+// 两版一致：1/2=icon、3=web、4=push）；0 / 负值 / 未知值一律精确透传，不把「非零」当热启动。
 //
-// 语义（改这里等于改行为）：
+// BDNC 闸门语义（改这里等于改行为）：
 //   - 原 IMP **先且只调一次**：它消费 _hasEnteredForeground、跑原策略检查与埋点，
 //     这一步不能省（省了会改变原生状态）。返回值先拿到手。
 //   - 原结果是 false 就**原样返回 false**，不记 hit（本来就不展示，不是我们拦下的）。
@@ -33,6 +40,8 @@
 //     _enterbackgroundTime / _splashWindow / _dspTimer），不补 notification、不改时长、
 //     不建窗不关窗、不加定时器/重试/锁/返回值 fallback。
 //   - 只读开关：不写 App 原生配置、不改持久化、不新增设置键。
+//   - App Open 那两条同规则：原 IMP 先且只调一次 → 原 false 透传不记 hit → 三开关全开才把 true 改 false；
+//     枚举各自独立（开屏 = launchType 0/2/3，App Open 冷 = 无枚举，App Open 热 = from 1/2/3/4），不混用。
 //
 // 依赖但不在本文件定义（由调用方提供，命名与其它组件一致）：
 //   BDLog / BDEnabled / BDDumpOnly / BDAdMethodsEnabled（读既有 Prefs 键 BDNadBlockAdMethods 的
@@ -74,6 +83,38 @@ static bool BDRSNeedShowSplash(id self, SEL _cmd, NSInteger launchType, id launc
     return false;
 }
 
+#pragma mark - App Open 冷/热策略闸门（两条）
+
+// 返回 bool（encoding 的 B），实参：冷 = id（launch options 字典，可为 nil）/ 热 = NSInteger（from）。
+// 同样不用 objc_msgSend 转发，只直调安装期保存下来的原 IMP；实参原值传递，不复制、不造默认对象。
+typedef bool (*BDAOIdGateIMP)(id, SEL, id);        // 冷
+typedef bool (*BDAOQGateIMP)(id, SEL, NSInteger);  // 热
+
+static IMP BDFROrigAppColdOpenGate;      // -[BDPanAdvertisementStrategy isEnableShowAdForAppColdOpenWithLaunchoptions:]
+static IMP BDFROrigAppHotOpenGate;       // -[BDPanAdvertisementStrategy isEnableShowAdForAppHotOpenWithFrom:]
+static dispatch_once_t BDRSHitAppColdOpenGate;
+static dispatch_once_t BDRSHitAppHotOpenGate;
+
+// 冷：原 true 且三开关全开才改成 false；其余一律原值透传。
+static bool BDRSAppColdOpenGate(id self, SEL _cmd, id launchOptions) {
+    // 原实现先且只调一次：AMIS 配置读取等副作用照旧，launchOptions（含 nil）identity 保真。
+    bool original = ((BDAOIdGateIMP)BDFROrigAppColdOpenGate)(self, _cmd, launchOptions);
+    if (!original) return false;                       // 原生本来就不展示：原值返回，不假记 hit
+    if (!(BDEnabled() && !BDDumpOnly() && BDAdMethodsEnabled())) return true;
+    BDFRSuppressed(&BDRSHitAppColdOpenGate, "app-open-cold-gate", YES);   // 只在真正否决时首次记一行
+    return false;
+}
+
+// 热：只有已证枚举 from ∈ {1,2,3,4} 才纳入否决；0 / 负值 / 其它未知值（含 NSIntegerMax）不猜。
+static bool BDRSAppHotOpenGate(id self, SEL _cmd, NSInteger from) {
+    bool original = ((BDAOQGateIMP)BDFROrigAppHotOpenGate)(self, _cmd, from);
+    if (!original) return false;
+    if (!(BDEnabled() && !BDDumpOnly() && BDAdMethodsEnabled())) return true;
+    if (from < 1 || from > 4) return true;             // 未来新增的未知 from 精确透传原 bool
+    BDFRSuppressed(&BDRSHitAppHotOpenGate, "app-open-hot-gate", YES);
+    return false;
+}
+
 #pragma mark - spec 与安装入口
 
 static BDFRSpec BDFRSpecResumeSplashGate = {
@@ -82,9 +123,23 @@ static BDFRSpec BDFRSpecResumeSplashGate = {
     (IMP)BDRSNeedShowSplash, &BDFROrigResumeSplashGate, "resume-splash-gate", NO,
 };
 
-// 接线入口：单条安装。校验不过只 skip，不写 IMP、不动别的组件。
+// App Open 冷/热各一条：独立校验、独立 orig 槽、独立 token，互不影响，也不改上面那条。
+static BDFRSpec BDFRSpecAppColdOpenGate = {
+    "BDPanAdvertisementStrategy", "isEnableShowAdForAppColdOpenWithLaunchoptions:",
+    NO, "B24@0:8@16", 3,
+    (IMP)BDRSAppColdOpenGate, &BDFROrigAppColdOpenGate, "app-open-cold-gate", NO,
+};
+static BDFRSpec BDFRSpecAppHotOpenGate = {
+    "BDPanAdvertisementStrategy", "isEnableShowAdForAppHotOpenWithFrom:",
+    NO, "B24@0:8q16", 3,
+    (IMP)BDRSAppHotOpenGate, &BDFROrigAppHotOpenGate, "app-open-hot-gate", NO,
+};
+
+// 接线入口：三条各自独立校验（校验不过只 skip 自己，不牵连别条）。
 static void BDRSInstallAll(void) {
     BDFRInstallSpec(&BDFRSpecResumeSplashGate);
+    BDFRInstallSpec(&BDFRSpecAppColdOpenGate);
+    BDFRInstallSpec(&BDFRSpecAppHotOpenGate);
 }
 
 #endif

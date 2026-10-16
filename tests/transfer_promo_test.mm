@@ -3,18 +3,23 @@
 // include 的是**真实**产品 header（TransferPromoRemoval.h）与**真实** FeatureRemoval.h 安装器，
 // 只有开关、日志和替身实现是假的：
 //   - 假开关 BDEnabled / BDDumpOnly / BDRemoveRecommend / BDRemoveGameCenter / BDRemoveJobNovel /
-//     BDRemoveTransferYikePromo / BDRemoveTransferGamePromo / BDRemoveTransferCardPromo
-//     （两个产品 header 都按同名静态函数引用）
+//     BDRemoveTransferYikePromo / BDRemoveTransferGamePromo / BDRemoveTransferCardPromo /
+//     BDRemoveTransferDataPromo / BDRemoveTransferTrialPromo（两个产品 header 都按同名静态函数引用）
 //   - main 里先调一次真实 BDFRInstallAll()（本 TU 没人引用会触发 unused-function；它的目标类在这里
 //     全都不存在，只会逐条 skip，不碰本测试的类，也不影响任何断言）
-//   - 四个动态 fake 类（真类名 + 真 selector + 真 encoding 自有方法）：前三个是 B16@0:8 bool，
-//     第四个 `BDPanFreeWidgetManage -chechFreeUnicomWidget` 是 **Q16@0:8（无符号 64 位）**；
-//     原返回值与调用次数都可调
+//   - 六个动态 fake 类（真类名 + 真 selector + 真 encoding 自有方法）：前三个是 B16@0:8 bool，
+//     第四个 `BDPanFreeWidgetManage -chechFreeUnicomWidget` 是 **Q16@0:8（无符号 64 位）**，
+//     第五个 `BDPanTransWidgetController -showDataPkgWigdet` 是 B16@0:8 bool，
+//     第六组是 `BDNCSpeedUpTrialManager -getSpeedUpTrialWidget`（@16@0:8 对象）加
+//     `BDNCSpeedUpTrialView -isInUseView / -isProductGuideView`（B16@0:8，供只读依赖校验）；
+//     原返回值/原对象与调用次数都可调，分类谓词还单独记账
 //
-// 只证明「原实现每次恰好被调一次 / 原值不被改写也不假 hit / 开关组合决定是否抑制 /
-// 三条 bool 与数值那条互不影响 / 幂等不自指 / 签名或类不符就 skip / 数值那条只在原值恰好 3 且
-// 三个开关都开时才改判 0ULL」。**不是真机测试**：传输页那行到底会不会留空行、免流办卡 widget 的
-// 展示时机与底部 fallback，都要真机看，host 测试不承诺。
+// 只证明「原实现每次恰好被调一次 / 原值与原对象不被改写也不假 hit / 开关组合决定是否抑制 /
+// 三条 bool + 数值 + 数据包 bool 那条互不影响 / 幂等不自指 / 签名或类不符就 skip /
+// 数值那条只在原值恰好 3 且开关都开时改判 0ULL / 试用那条只在 exact view 类 + product 真 + inUse 假
+// 且门全开、主线程时返回 nil（其余一律同一原对象，且门不满足/非主线程时不查 UI 分类）/
+// 依赖校验失败只跳过试用那一条」。**不是真机测试**：页面留白、widget 展示时机、异步从 inUse 变
+// guide 的那些展示，都要真机看，host 测试不承诺。
 //
 // 构建运行（macOS，无需 IPA，无需 Theos）：
 //   clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
@@ -35,6 +40,8 @@ static BOOL gRemoveJobNovel = YES;
 static BOOL gRemoveTransferYikePromo = YES;
 static BOOL gRemoveTransferGamePromo = YES;
 static BOOL gRemoveTransferCardPromo = YES;
+static BOOL gRemoveTransferDataPromo = YES;
+static BOOL gRemoveTransferTrialPromo = YES;
 static unsigned gLogLines = 0;
 
 static void BDLog(NSString *fmt, ...) { (void)fmt; gLogLines++; }
@@ -46,6 +53,8 @@ static BOOL BDRemoveJobNovel(void) { return gRemoveJobNovel; }
 static BOOL BDRemoveTransferYikePromo(void) { return gRemoveTransferYikePromo; }
 static BOOL BDRemoveTransferGamePromo(void) { return gRemoveTransferGamePromo; }
 static BOOL BDRemoveTransferCardPromo(void) { return gRemoveTransferCardPromo; }
+static BOOL BDRemoveTransferDataPromo(void) { return gRemoveTransferDataPromo; }
+static BOOL BDRemoveTransferTrialPromo(void) { return gRemoveTransferTrialPromo; }
 
 // 顺序即真实接线顺序：先 FeatureRemoval.h（安装器），再 TransferPromoRemoval.h。
 #include "../FeatureRemoval.h"
@@ -99,6 +108,13 @@ static unsigned long long BDTPSendU64(id obj, SEL sel) {
     return imp(obj, sel);
 }
 
+// 对象返回那条（@16@0:8）：按 +0 约定取回对象指针，只比较身份，不改变原对象。
+static id BDTPSendObject(id obj, SEL sel) {
+    id (*imp)(id, SEL) =
+        (id (*)(id, SEL))class_getMethodImplementation(object_getClass(obj), sel);
+    return imp(obj, sel);
+}
+
 #pragma mark - 三个替身实现
 
 static BOOL gYikeTransOrig = YES;      // 原实现的返回值，可调
@@ -141,10 +157,49 @@ static unsigned long long PhFreeUnicomCheck(id self, SEL _cmd) {
     gCardCalls++; return gCardOrig;
 }
 
+// 取值那条（加速试用 getSpeedUpTrialWidget）：@16@0:8 返回对象，可用开关控制返回什么，
+// 并能分别统计「分类谓词」被问了几次（用来证明门控关闭/非主线程时不查 UI 分类）。
+static id gTrialWidgetOrig = nil;
+static unsigned gTrialWidgetCalls = 0;
+static BOOL gInUse = NO;                     // -isInUseView 的返回值（可调）
+static BOOL gProduct = NO;                   // -isProductGuideView 的返回值（可调）
+static unsigned gInUseCalls = 0;
+static unsigned gProductCalls = 0;
+static SEL gTrialWidgetSel, gInUseSel, gProductSel;
+static Class gTrialMgrCls, gTrialViewCls, gTrialViewSubCls;
+static id gTrialMgrInst, gTrialViewInst, gTrialViewSubInst, gPlainObject;
+
+static id PhTrialWidget(id self, SEL _cmd) {
+    gLastOrigReceiver = self; gLastOrigSEL = _cmd;
+    gTrialWidgetCalls++; return gTrialWidgetOrig;
+}
+static bool PhInUseView(id self, SEL _cmd) {
+    (void)self; (void)_cmd; gInUseCalls++; return gInUse ? true : false;
+}
+static bool PhProductGuideView(id self, SEL _cmd) {
+    (void)self; (void)_cmd; gProductCalls++; return gProduct ? true : false;
+}
+
+// 数据包（流量包）引导那条：原返回值可调，同样捕获 self/_cmd。
+static BOOL gDataPkgOrig = YES;
+static unsigned gDataPkgCalls = 0;
+static SEL gDataPkgSel;
+static Class gDataPkgCls;
+static id gDataPkgInst;
+
+static bool PhDataPkgShow(id self, SEL _cmd) {
+    gLastOrigReceiver = self; gLastOrigSEL = _cmd;
+    gDataPkgCalls++; return gDataPkgOrig ? true : false;
+}
+
 static void setup_real_classes(void) {
     gYikeSel = sel_registerName("canShowYikeBanner");
     SEL gameSel = sel_registerName("canTransIdleGameWidgetShow");
     gCardSel = sel_registerName("chechFreeUnicomWidget");
+    gDataPkgSel = sel_registerName("showDataPkgWigdet");
+    gTrialWidgetSel = sel_registerName("getSpeedUpTrialWidget");
+    gInUseSel = sel_registerName("isInUseView");
+    gProductSel = sel_registerName("isProductGuideView");
 
     gYikeTransCls = BDTPMakeClass("BDPanTransViewController", Nil);
     CHECK(class_addMethod(gYikeTransCls, gYikeSel, (IMP)PhYikeTrans, "B16@0:8"));
@@ -154,11 +209,27 @@ static void setup_real_classes(void) {
     CHECK(class_addMethod(gGameCls, gameSel, (IMP)PhGame, "B16@0:8"));
     gCardCls = BDTPMakeClass("BDPanFreeWidgetManage", Nil);
     CHECK(class_addMethod(gCardCls, gCardSel, (IMP)PhFreeUnicomCheck, "Q16@0:8"));
+    gDataPkgCls = BDTPMakeClass("BDPanTransWidgetController", Nil);
+    CHECK(class_addMethod(gDataPkgCls, gDataPkgSel, (IMP)PhDataPkgShow, "B16@0:8"));
+    // 第六条：view 类两个 B getter + manager 的对象 getter（都按真实签名/encoding 注册）
+    gTrialViewCls = BDTPMakeClass("BDNCSpeedUpTrialView", Nil);
+    CHECK(class_addMethod(gTrialViewCls, gInUseSel, (IMP)PhInUseView, "B16@0:8"));
+    CHECK(class_addMethod(gTrialViewCls, gProductSel, (IMP)PhProductGuideView, "B16@0:8"));
+    gTrialViewSubCls = BDTPMakeClass("BDTPPhantomTrialViewSub", gTrialViewCls);   // 未知子类
+    CHECK(gTrialViewSubCls != Nil);
+    gTrialMgrCls = BDTPMakeClass("BDNCSpeedUpTrialManager", Nil);
+    CHECK(class_addMethod(gTrialMgrCls, gTrialWidgetSel, (IMP)PhTrialWidget, "@16@0:8"));
 
     gYikeTransInst = [[gYikeTransCls alloc] init];
     gYikeFileListInst = [[gYikeFileListCls alloc] init];
     gGameInst = [[gGameCls alloc] init];
     gCardInst = [[gCardCls alloc] init];
+    gDataPkgInst = [[gDataPkgCls alloc] init];
+    gTrialMgrInst = [[gTrialMgrCls alloc] init];
+    gTrialViewInst = [[gTrialViewCls alloc] init];
+    gTrialViewSubInst = [[gTrialViewSubCls alloc] init];
+    gPlainObject = [[NSObject alloc] init];
+    gTrialWidgetOrig = gTrialViewInst;      // 默认：返回真实的 view 实例
 }
 
 static void reset_all(void) {
@@ -167,9 +238,17 @@ static void reset_all(void) {
     gRemoveTransferYikePromo = YES;
     gRemoveTransferGamePromo = YES;
     gRemoveTransferCardPromo = YES;
+    gRemoveTransferDataPromo = YES;
+    gRemoveTransferTrialPromo = YES;
     gYikeTransCalls = gYikeFileListCalls = gGameCalls = 0;
     gCardCalls = 0;
     gCardOrig = 0ULL;
+    gDataPkgCalls = 0;
+    gDataPkgOrig = YES;
+    gTrialWidgetCalls = gInUseCalls = gProductCalls = 0;
+    gInUse = NO;
+    gProduct = NO;
+    gTrialWidgetOrig = gTrialViewInst;
 }
 
 #pragma mark - 测试
@@ -180,6 +259,11 @@ static void test_before_install(void) {
     CHECK(BDTPspecYikeTrans.installed == NO);
     CHECK(BDTPspecYikeFileList.installed == NO);
     CHECK(BDTPspecIdleGame.installed == NO);
+    CHECK(BDTPspecFreeUnicom.installed == NO);
+    CHECK(BDTPspecDataPkg.installed == NO);                       // 第五条
+    CHECK(BDTPspecTrialWidget.installed == NO);                   // 第六条
+    CHECK(BDTPspecTrialInUseView.installed == NO);                // 只读依赖永不 attach
+    CHECK(BDTPspecTrialProductGuideView.installed == NO);
 
     reset_all();
     unsigned logsBefore = gLogLines;
@@ -199,7 +283,23 @@ static void test_before_install(void) {
     CHECK(BDTPSendU64(gCardInst, gCardSel) == 0ULL);
     CHECK(gCardCalls == 2);
     CHECK(gLogLines == logsBefore);
+
+    // 第五/第六条：安装前同样直落原实现，原值/原对象原样
+    gDataPkgOrig = NO;
+    CHECK(BDTPSendBool(gDataPkgInst, gDataPkgSel) == false);
+    CHECK(gDataPkgCalls == 1);
+    gDataPkgOrig = YES;
+    CHECK(BDTPSendBool(gDataPkgInst, gDataPkgSel) == true);
+    CHECK(gDataPkgCalls == 2);
+    CHECK(BDTPSendObject(gTrialMgrInst, gTrialWidgetSel) == gTrialViewInst);
+    CHECK(gTrialWidgetCalls == 1);
+    CHECK(gInUseCalls == 0 && gProductCalls == 0);              // 安装前没人问分类
+    CHECK(gLogLines == logsBefore);
 }
+
+// 安装一共 7 条（旧 4 + 数据包 + 试用取视图 + 两条只读依赖不打 installed 行）：
+// 六条 target 各自一行 installed，依赖只校验不 attach、不记 installed。
+#define BDTP_INSTALLED_LINES 6
 
 static void test_install(void) {
     unsigned logsBefore = gLogLines;
@@ -208,16 +308,34 @@ static void test_install(void) {
     CHECK(BDTPspecYikeFileList.installed == YES);
     CHECK(BDTPspecIdleGame.installed == YES);
     CHECK(BDTPspecFreeUnicom.installed == YES);
+    CHECK(BDTPspecDataPkg.installed == YES);                      // 第五条
+    CHECK(BDTPspecTrialWidget.installed == YES);                  // 第六条（两个依赖都过）
+    CHECK(BDTPspecTrialInUseView.installed == NO);                // 依赖永不 attach
+    CHECK(BDTPspecTrialProductGuideView.installed == NO);
     CHECK(*BDTPspecYikeTrans.orig == (IMP)PhYikeTrans);
     CHECK(*BDTPspecYikeFileList.orig == (IMP)PhYikeFileList);
     CHECK(*BDTPspecIdleGame.orig == (IMP)PhGame);
     CHECK(*BDTPspecFreeUnicom.orig == (IMP)PhFreeUnicomCheck);
+    CHECK(*BDTPspecDataPkg.orig == (IMP)PhDataPkgShow);
+    CHECK(*BDTPspecTrialWidget.orig == (IMP)PhTrialWidget);
     CHECK(*BDTPspecYikeTrans.orig != (IMP)BDTPYikeTrans);
     CHECK(*BDTPspecIdleGame.orig != (IMP)BDTPIdleGame);
     CHECK(*BDTPspecFreeUnicom.orig != (IMP)BDTPFreeUnicomCheck);       // 不自指
+    CHECK(*BDTPspecDataPkg.orig != (IMP)BDTPDataPkgShow);
+    CHECK(*BDTPspecTrialWidget.orig != (IMP)BDTPTrialWidget);
     CHECK(class_getMethodImplementation(gYikeTransCls, gYikeSel) == (IMP)BDTPYikeTrans);
     CHECK(class_getMethodImplementation(gCardCls, gCardSel) == (IMP)BDTPFreeUnicomCheck);
-    CHECK(gLogLines == logsBefore + 4);                         // 四条各一行 installed
+    CHECK(class_getMethodImplementation(gDataPkgCls, gDataPkgSel) == (IMP)BDTPDataPkgShow);
+    CHECK(class_getMethodImplementation(gTrialMgrCls, gTrialWidgetSel) == (IMP)BDTPTrialWidget);
+    // 依赖方法本身没被换掉（view 类两个 getter 仍是替身）
+    CHECK(class_getMethodImplementation(gTrialViewCls, gInUseSel) == (IMP)PhInUseView);
+    CHECK(class_getMethodImplementation(gTrialViewCls, gProductSel) == (IMP)PhProductGuideView);
+    // 安装成功后运行期会真正用到已校验的依赖
+    CHECK(BDTPTrialViewClass == gTrialViewCls);
+    CHECK(BDTPTrialInUseIMP == (IMP)PhInUseView);
+    CHECK(BDTPTrialProductIMP == (IMP)PhProductGuideView);
+    CHECK(BDTPTrialInUseSel == gInUseSel && BDTPTrialProductSel == gProductSel);
+    CHECK(gLogLines == logsBefore + BDTP_INSTALLED_LINES);       // 六条各一行 installed
 }
 
 static void test_gate_semantics(void) {
@@ -305,8 +423,14 @@ static void test_reinstall_no_recursion(void) {
     CHECK(*BDTPspecIdleGame.orig == (IMP)PhGame);
     CHECK(*BDTPspecFreeUnicom.orig == (IMP)PhFreeUnicomCheck);
     CHECK(*BDTPspecFreeUnicom.orig != (IMP)BDTPFreeUnicomCheck);
+    CHECK(*BDTPspecDataPkg.orig == (IMP)PhDataPkgShow);          // 第五条也没被自指覆盖
+    CHECK(*BDTPspecTrialWidget.orig == (IMP)PhTrialWidget);      // 第六条也没被自指覆盖
+    CHECK(BDTPTrialInUseIMP == (IMP)PhInUseView);                // 依赖仍是原实现，不是替换实现
+    CHECK(BDTPTrialProductIMP == (IMP)PhProductGuideView);
+    CHECK(BDTPTrialInUseIMP != (IMP)BDTPTrialWidget);
     CHECK(class_getMethodImplementation(gCardCls, gCardSel) == (IMP)BDTPFreeUnicomCheck);
-    CHECK(gLogLines == logsBefore + 4);                          // 四行 already installed
+    CHECK(class_getMethodImplementation(gDataPkgCls, gDataPkgSel) == (IMP)BDTPDataPkgShow);
+    CHECK(gLogLines == logsBefore + BDTP_INSTALLED_LINES);       // 六行 already installed
 
     reset_all();
     unsigned hitsBefore = gLogLines;
@@ -317,7 +441,13 @@ static void test_reinstall_no_recursion(void) {
     gCardOrig = 3ULL;
     CHECK(BDTPSendU64(gCardInst, gCardSel) == 0ULL);             // 数值那条也真的还能调用、还真抑制
     CHECK(gCardCalls == 1);
+    CHECK(BDTPSendBool(gDataPkgInst, gDataPkgSel) == false);     // 第五条照旧抑制
+    CHECK(gDataPkgCalls == 1);
+    gProduct = YES;                                              // 第六条：只有 product 才是 null
+    CHECK(BDTPSendObject(gTrialMgrInst, gTrialWidgetSel) == nil);
+    CHECK(gTrialWidgetCalls == 1);
     CHECK(gLogLines == hitsBefore);                              // hit token 已消耗，不再打
+    reset_all();
 }
 
 static void test_skip_paths(void) {
@@ -438,7 +568,7 @@ static bool BDTPCallGate(id obj, SEL sel) {
 // 且门控未生效（总开关开、非诊断、该条独立开关开全部满足）；原 false 一律 false。
 static bool BDTPExpectedResult(bool original, BOOL enabled, BOOL dumpOnly, BOOL independent) {
     BOOL gate = enabled && !dumpOnly && independent;
-    return original && !gate ? true : false;
+    return original && !gate;
 }
 
 static void test_gate_matrix_all_specs(void) {
@@ -604,6 +734,270 @@ static void test_card_numeric_gate(void) {
     reset_all();
 }
 
+#pragma mark - 第五条（数据包/流量包引导）：原真假 × 三门 的真值表
+
+// 规格（不是产品实现的副本）：结果 true 仅当原实现为 true 且门控未生效（总开关开、非诊断、
+// DataPromo 开关开全部满足）；原 false 一律 false。
+static bool BDTPExpectedDataPkg(bool original, BOOL enabled, BOOL dumpOnly, BOOL independent) {
+    BOOL gate = enabled && !dumpOnly && independent;
+    return original && !gate ? true : false;
+}
+
+static void test_data_pkg_gate(void) {
+    // 先证明「没有真正抑制之前不会假 hit」：原 false 与各关门组合一行日志都不打。
+    reset_all();
+    unsigned logsBefore = gLogLines;
+    gDataPkgOrig = NO;
+    CHECK(BDTPSendBool(gDataPkgInst, gDataPkgSel) == false);
+    CHECK(gDataPkgCalls == 1);
+    CHECK(gLogLines == logsBefore);
+    gDataPkgOrig = YES;
+    gEnabled = NO;
+    CHECK(BDTPSendBool(gDataPkgInst, gDataPkgSel) == true);       // 总开关关：原 true 透传
+    gEnabled = YES;
+    gDumpOnly = YES;
+    CHECK(BDTPSendBool(gDataPkgInst, gDataPkgSel) == true);       // 诊断：透传
+    gDumpOnly = NO;
+    gRemoveTransferDataPromo = NO;
+    CHECK(BDTPSendBool(gDataPkgInst, gDataPkgSel) == true);       // 独立开关关：透传
+    CHECK(gDataPkgCalls == 4);
+    CHECK(gLogLines == logsBefore);                               // 以上一行 hit 都没有
+
+    // 首次真正抑制：恰好一行；重复不再打（dispatch_once）。
+    gRemoveTransferDataPromo = YES;
+    CHECK(BDTPSendBool(gDataPkgInst, gDataPkgSel) == false);
+    CHECK(gLogLines == logsBefore + 1);
+    for (int i = 0; i < 3; i++) CHECK(BDTPSendBool(gDataPkgInst, gDataPkgSel) == false);
+    CHECK(gLogLines == logsBefore + 1);
+    CHECK(gDataPkgCalls == 8);
+
+    // 原真假 × 三门 全 16 组：结果、原实现恰好一次、receiver/SEL 保真。
+    const BOOL bools[2] = {YES, NO};
+    const bool origs[2] = {true, false};
+    unsigned checked = 0;
+    unsigned quiet = gLogLines;
+    for (unsigned o = 0; o < 2; o++)
+    for (unsigned e = 0; e < 2; e++)
+    for (unsigned d = 0; d < 2; d++)
+    for (unsigned i = 0; i < 2; i++) {
+        gEnabled = bools[e]; gDumpOnly = bools[d]; gRemoveTransferDataPromo = bools[i];
+        gDataPkgOrig = origs[o];
+        gLastOrigReceiver = nil; gLastOrigSEL = NULL;
+        unsigned callsBefore = gDataPkgCalls;
+        bool want = BDTPExpectedDataPkg(origs[o], bools[e], bools[d], bools[i]);
+        bool got = BDTPSendBool(gDataPkgInst, gDataPkgSel);
+        checked++;
+        if (got != want) {
+            fprintf(stderr, "FAIL %s:%d: dataPkg orig=%d enabled=%d dump=%d indep=%d -> %d (want %d)\n",
+                    __FILE__, __LINE__, origs[o], bools[e], bools[d], bools[i], got, want);
+            gFailures++;
+        }
+        CHECK(gDataPkgCalls == callsBefore + 1);
+        CHECK(gLastOrigReceiver == gDataPkgInst);
+        CHECK(gLastOrigSEL == gDataPkgSel);
+    }
+    CHECK(checked == 16);
+    CHECK(gLogLines == quiet);                                    // token 已消耗，不再打
+
+    // 不影响旧四条：把旧那几条开回全开，抑制行为与日志都不变（各 token 早已消耗）。
+    gEnabled = YES; gDumpOnly = NO;
+    gRemoveTransferYikePromo = YES; gYikeTransOrig = YES;
+    unsigned oldQuiet = gLogLines;
+    CHECK(BDTPSendBool(gYikeTransInst, gYikeSel) == false);
+    CHECK(BDTPSendBool(gYikeFileListInst, gYikeSel) == false);
+    CHECK(BDTPSendBool(gGameInst, sel_registerName("canTransIdleGameWidgetShow")) == false);
+    gCardOrig = 3ULL;
+    CHECK(BDTPSendU64(gCardInst, gCardSel) == 0ULL);
+    CHECK(gLogLines == oldQuiet);
+    reset_all();
+}
+
+#pragma mark - 第六条（加速试用促销）：同一原对象透传 / 只在商品引导时 nil
+
+static void test_trial_promo_identity_then_veto(void) {
+    reset_all();
+    unsigned logsBefore = gLogLines;
+    CHECK([NSThread isMainThread]);
+
+    // 1) 原实现已经 nil：同一（nil）值透传，不查分类、不记 hit
+    gTrialWidgetOrig = nil;
+    CHECK(BDTPSendObject(gTrialMgrInst, gTrialWidgetSel) == nil);
+    CHECK(gTrialWidgetCalls == 1);
+    CHECK(gInUseCalls == 0 && gProductCalls == 0);
+    CHECK(gLogLines == logsBefore);
+
+    // 2) 未知类型（NSObject）：同一个对象透传，不查分类
+    gTrialWidgetOrig = gPlainObject;
+    CHECK(BDTPSendObject(gTrialMgrInst, gTrialWidgetSel) == gPlainObject);
+    CHECK(gTrialWidgetCalls == 2);
+    CHECK(gInUseCalls == 0 && gProductCalls == 0);
+    CHECK(gLogLines == logsBefore);
+
+    // 3) 已核 view 的未知子类：同样原对象透传，不查分类、不越过未知 override
+    gTrialWidgetOrig = gTrialViewSubInst;
+    CHECK(BDTPSendObject(gTrialMgrInst, gTrialWidgetSel) == gTrialViewSubInst);
+    CHECK(gTrialWidgetCalls == 3);
+    CHECK(gInUseCalls == 0 && gProductCalls == 0);
+    CHECK(gLogLines == logsBefore);
+
+    // 4) 正常「进行中」：先问 isInUseView 得到真 → 立即透传（不再问 product）
+    gTrialWidgetOrig = gTrialViewInst;
+    gInUse = YES; gProduct = NO;
+    CHECK(BDTPSendObject(gTrialMgrInst, gTrialWidgetSel) == gTrialViewInst);
+    CHECK(gInUseCalls == 1 && gProductCalls == 0);
+    CHECK(gLogLines == logsBefore);
+
+    // 5) 未知状态（inUse 假 + product 假）：两次分类都问过，仍原对象透传
+    gInUse = NO; gProduct = NO;
+    CHECK(BDTPSendObject(gTrialMgrInst, gTrialWidgetSel) == gTrialViewInst);
+    CHECK(gInUseCalls == 2 && gProductCalls == 1);
+    CHECK(gLogLines == logsBefore);
+
+    // 6) 不一致（inUse 真 + product 真）：进行中优先 → 原对象透传，不再问 product
+    gInUse = YES; gProduct = YES;
+    CHECK(BDTPSendObject(gTrialMgrInst, gTrialWidgetSel) == gTrialViewInst);
+    CHECK(gInUseCalls == 3 && gProductCalls == 1);
+    CHECK(gLogLines == logsBefore);
+
+    // 7) 唯一会否决的情形：product 真 + inUse 假（exact class + 门全开 + 主线程）
+    gInUse = NO; gProduct = YES;
+    CHECK(BDTPSendObject(gTrialMgrInst, gTrialWidgetSel) == nil);
+    CHECK(gInUseCalls == 4 && gProductCalls == 2);
+    CHECK(gLogLines == logsBefore + 1);                            // 首次真正抑制：恰好一行
+    for (int i = 0; i < 3; i++) CHECK(BDTPSendObject(gTrialMgrInst, gTrialWidgetSel) == nil);
+    CHECK(gLogLines == logsBefore + 1);                            // 不再打
+    CHECK(gTrialWidgetCalls == 10);                                // 每次调用都恰好问原实现一次
+
+    // 8) 门控关闭的三种情形：纯透传、**不调用分类**、不记 hit
+    const BOOL bools[2] = {YES, NO};
+    for (unsigned e = 0; e < 2; e++)
+    for (unsigned d = 0; d < 2; d++)
+    for (unsigned i = 0; i < 2; i++) {
+        gEnabled = bools[e]; gDumpOnly = bools[d]; gRemoveTransferTrialPromo = bools[i];
+        gInUse = NO; gProduct = YES;                              // 最“该被拦”的分类结果
+        gLastOrigReceiver = nil; gLastOrigSEL = NULL;
+        unsigned callsBefore = gTrialWidgetCalls;
+        unsigned iuBefore = gInUseCalls, prBefore = gProductCalls;
+        id want = (bools[e] && !bools[d] && bools[i]) ? nil : gTrialViewInst;
+        id got = BDTPSendObject(gTrialMgrInst, gTrialWidgetSel);
+        CHECK(got == want);
+        CHECK(gTrialWidgetCalls == callsBefore + 1);
+        CHECK(gLastOrigReceiver == gTrialMgrInst);
+        CHECK(gLastOrigSEL == gTrialWidgetSel);
+        if (bools[e] && !bools[d] && bools[i]) {
+            // 门全开：会问分类（先 inUse 后 product）→ 该组合下返回 nil
+            CHECK(got == nil);
+            CHECK(gInUseCalls == iuBefore + 1 && gProductCalls == prBefore + 1);
+        } else {
+            // 任一开关关/诊断：完全不查 UI 分类
+            CHECK(gInUseCalls == iuBefore && gProductCalls == prBefore);
+        }
+    }
+    CHECK(gLogLines == logsBefore + 1);                            // 只有第 7 步那一行
+
+    // 9) 非主线程：纯透传、不查分类、不记 hit（开关全开、分类结果也是“该拦”的组合）
+    gEnabled = YES; gDumpOnly = NO; gRemoveTransferTrialPromo = YES;
+    gInUse = NO; gProduct = YES;
+    unsigned beforeInUse = gInUseCalls, beforeProduct = gProductCalls, beforeCalls = gTrialWidgetCalls;
+    __block id bgResult = nil;
+    // libdispatch 的 sync 可在调用线程内联执行；async + group 等待才能真正覆盖非主线程路径。
+    dispatch_group_t work = dispatch_group_create();
+    dispatch_group_async(work, dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
+        @autoreleasepool {
+            CHECK(![NSThread isMainThread]);
+            bgResult = BDTPSendObject(gTrialMgrInst, gTrialWidgetSel);
+        }
+    });
+    CHECK(dispatch_group_wait(work, DISPATCH_TIME_FOREVER) == 0);
+    CHECK(bgResult == gTrialViewInst);                             // 原对象透传
+    CHECK(gTrialWidgetCalls == beforeCalls + 1);
+    CHECK(gInUseCalls == beforeInUse && gProductCalls == beforeProduct);
+    CHECK(gLogLines == logsBefore + 1);
+
+    reset_all();
+}
+
+#pragma mark - 第六条：依赖校验失败只跳它自己（C2 与旧四条照装）
+
+static void test_dep_fail_closed_c3_skips_c2_only(void) {
+    // 真依赖已通过（test_install 里装好）；下面全部用独立 phantom，不改已注册类的 encoding。
+    CHECK(BDTPspecTrialWidget.installed == YES);
+    CHECK(BDTPspecDataPkg.installed == YES);
+    CHECK(BDTPspecTrialInUseView.installed == NO);
+    CHECK(BDTPspecTrialProductGuideView.installed == NO);
+
+    const char *mgrs[] = {"BDTPPhantomTrialMgrEnc", "BDTPPhantomTrialMgrArgc",
+                          "BDTPPhantomTrialMgrMissingDep", "BDTPPhantomTrialMgrInheritedDep"};
+    Class mgr[4];
+    SEL tw = sel_registerName("getSpeedUpTrialWidget");
+    for (int i = 0; i < 4; i++) {
+        mgr[i] = BDTPMakeClass(mgrs[i], Nil);
+        CHECK(class_addMethod(mgr[i], tw, (IMP)PhTrialWidget, "@16@0:8"));
+    }
+
+    // 1) 依赖 encoding 不符（真注册 B16@0:8，spec 期望 B24@0:8）
+    Class badEnc = BDTPMakeClass("BDTPPhantomTrialViewEnc", Nil);
+    CHECK(class_addMethod(badEnc, gInUseSel, (IMP)PhInUseView, "B16@0:8"));
+    CHECK(class_addMethod(badEnc, gProductSel, (IMP)PhProductGuideView, "B16@0:8"));
+    // 2) 依赖 argc 不符（真值 2，spec 期望 3）
+    Class badArgc = BDTPMakeClass("BDTPPhantomTrialViewArgc", Nil);
+    CHECK(class_addMethod(badArgc, gInUseSel, (IMP)PhInUseView, "B16@0:8"));
+    CHECK(class_addMethod(badArgc, gProductSel, (IMP)PhProductGuideView, "B16@0:8"));
+    // 3) 依赖只在父类（子类没有自有实现）
+    Class base = BDTPMakeClass("BDTPPhantomTrialViewBase", Nil);
+    CHECK(class_addMethod(base, gInUseSel, (IMP)PhInUseView, "B16@0:8"));
+    CHECK(class_addMethod(base, gProductSel, (IMP)PhProductGuideView, "B16@0:8"));
+    Class sub = BDTPMakeClass("BDTPPhantomTrialViewSubOnly", base);
+    CHECK(sub != Nil);
+
+    struct { const char *view; const char *vEnc; unsigned vArgc;
+             const char *mgr; const char *tEnc; unsigned tArgc; const char *name; } cases[] = {
+        {"BDTPPhantomTrialViewEnc", "B24@0:8", 2, "BDTPPhantomTrialMgrEnc", "@16@0:8", 2, "dep-enc"},
+        {"BDTPPhantomTrialViewArgc", "B16@0:8", 3, "BDTPPhantomTrialMgrArgc", "@16@0:8", 2, "dep-argc"},
+        {"BDTPPhantomTrialViewMissing", "B16@0:8", 2, "BDTPPhantomTrialMgrMissingDep", "@16@0:8", 2, "dep-missing-class"},
+        {"BDTPPhantomTrialViewSubOnly", "B16@0:8", 2, "BDTPPhantomTrialMgrInheritedDep", "@16@0:8", 2, "dep-inherited-only"},
+    };
+    unsigned logsBefore = gLogLines;
+    for (unsigned k = 0; k < sizeof(cases) / sizeof(cases[0]); k++) {
+        IMP o = NULL;
+        BDFRSpec d1 = BDTPTestSpec(cases[k].view, "isInUseView", cases[k].vEnc, cases[k].vArgc, NULL, NULL, cases[k].name);
+        BDFRSpec d2 = BDTPTestSpec(cases[k].view, "isProductGuideView", cases[k].vEnc, cases[k].vArgc, NULL, NULL, cases[k].name);
+        BDFRSpec t = BDTPTestSpec(cases[k].mgr, "getSpeedUpTrialWidget", cases[k].tEnc, cases[k].tArgc,
+                                  (IMP)BDTPTrialWidget, &o, cases[k].name);
+        Class vc = Nil; IMP pi = NULL, pp = NULL; SEL ps = NULL, pps = NULL;
+        CHECK(BDTPInstallTrialWith(&d1, &d2, &t, &vc, &pi, &ps, &pp, &pps) == NO);
+        CHECK(t.installed == NO);
+        CHECK(o == NULL);                       // 目标原 IMP 槽没被写
+        CHECK(vc == Nil && pi == NULL && ps == NULL && pp == NULL && pps == NULL);  // 依赖全局也没被写
+        // 每个失败用例恰好三行：两个依赖各一行 resolve skip + 安装器一行 skip
+        CHECK(gLogLines == logsBefore + 3 * (k + 1));
+        // 目标方法槽没被换：调用仍落到替身
+        Class mc = objc_getClass(cases[k].mgr);
+        CHECK(class_getMethodImplementation(mc, tw) == (IMP)PhTrialWidget);
+    }
+    // 父类依赖那条也确认：父类/子类槽都没被换
+    CHECK(class_getMethodImplementation(sub, gInUseSel) == (IMP)PhInUseView);
+    CHECK(class_getMethodImplementation(base, gProductSel) == (IMP)PhProductGuideView);
+
+    // 真依赖与已装好的其它条不受影响
+    CHECK(BDTPTrialViewClass == gTrialViewCls);
+    CHECK(BDTPTrialInUseIMP == (IMP)PhInUseView);
+    CHECK(BDTPspecTrialWidget.installed == YES);
+    CHECK(BDTPspecDataPkg.installed == YES);
+    CHECK(BDTPspecFreeUnicom.installed == YES);
+    CHECK(*BDTPspecTrialWidget.orig == (IMP)PhTrialWidget);
+    CHECK(*BDTPspecDataPkg.orig == (IMP)PhDataPkgShow);
+
+    // 行为回归：C2 照旧抑制，C3 也只有 product 那条才 nil
+    reset_all();
+    unsigned quiet = gLogLines;
+    CHECK(BDTPSendBool(gDataPkgInst, gDataPkgSel) == false);
+    gInUse = NO; gProduct = YES;
+    CHECK(BDTPSendObject(gTrialMgrInst, gTrialWidgetSel) == nil);
+    CHECK(gLogLines == quiet);                  // 两个 token 早已消耗
+    reset_all();
+}
+
 #pragma mark - main
 
 int main(void) {
@@ -619,6 +1013,9 @@ int main(void) {
         test_gate_semantics();
         test_gate_matrix_all_specs();      // 首次 hit 断言之后跑：token 已消耗，只验真值表与保真
         test_card_numeric_gate();          // 数值那条有自己的 hit token；上面那条 bool 矩阵不碰它
+        test_data_pkg_gate();              // 第五条：原真假 × 三门 16 组（自己消耗 data-promo token）
+        test_trial_promo_identity_then_veto();  // 第六条：透传/否决矩阵 + 分类调用记账（消耗 trial token）
+        test_dep_fail_closed_c3_skips_c2_only(); // 第六条依赖不过只跳它自己，C2 与旧四条不受影响
         test_global_and_dump_passthrough();
         test_reinstall_no_recursion();
         test_skip_paths();

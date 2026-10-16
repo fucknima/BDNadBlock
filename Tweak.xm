@@ -132,6 +132,8 @@ static BOOL BDRemoveTaskCard(void)      { return BDNadPrefsActive(@"BDRemoveTask
 static BOOL BDRemoveTransferGamePromo(void) { return BDNadPrefsActive(@"BDRemoveTransferGamePromo"); }
 static BOOL BDRemoveTransferYikePromo(void) { return BDNadPrefsActive(@"BDRemoveTransferYikePromo"); }
 static BOOL BDRemoveTransferCardPromo(void) { return BDNadPrefsActive(@"BDRemoveTransferCardPromo"); }
+static BOOL BDRemoveTransferDataPromo(void) { return BDNadPrefsActive(@"BDRemoveTransferDataPromo"); }
+static BOOL BDRemoveTransferTrialPromo(void) { return BDNadPrefsActive(@"BDRemoveTransferTrialPromo"); }
 static BOOL BDExperimentHideHomeBanner(void) { return BDNadPrefsActive(@"BDExperimentHideHomeBanner"); }
 // 广告展示拦截（旧 18 条 no-op 与冷/热启动开屏闸门共用这一个开关）
 static BOOL BDAdMethodsEnabled(void)   { return BDNadPrefsActive(@"BDNadBlockAdMethods"); }
@@ -148,7 +150,7 @@ static BOOL BDBlockNetwork(void) {
 //   PersonalRemoval.h「我的」活动轮播 + 推广整排（同样复用安装器；后续 promo 往这里追加）
 //   PersonalViewRemoval.h「我的」任务卡 / 金币卡（布局 post-hook + 只读 getter 依赖）
 //   RenewButtonRemoval.h「去续费」按钮可隐藏（不 import UIKit，靠调用方先引入的 UIKit）
-//   TransferPromoRemoval.h 一刻相册行内推广 + 下载小游戏引导 + 免流办卡（Foundation only）
+//   TransferPromoRemoval.h 一刻相册行内推广 + 下载小游戏引导 + 免流办卡 + 数据包(流量包)引导 + 加速试用商品引导（Foundation only）
 //   HomeBannerExperiment.h 首页顶部横幅容器·实验（默认关闭；候选 _bannerView 定点隐藏）
 //   SettingsMenu.h    提供 BDPresentPurificationSettings（MenuEntry 的依赖）
 //   SearchDataRemoval.h / SearchViewRemoval.h  搜索框数据层与 UI 层清理
@@ -464,9 +466,9 @@ static void BDNadBlockInit(void) {
     // 只有冷启动、且这里发生在页面组装之前才生效；真机以 [BDNadFeature] installed 日志为准。
     BDFRInstallAll();
     BDHBInstallAll();    // 首页顶部横幅容器·实验（默认关闭；装好也不改行为，开关关闭时原样透传）
-    BDTPInstallAll();    // 一刻相册行内推广 / 下载小游戏引导 / 免流办卡：三条 bool + 一条 Q 类型选择，各自独立安装
-    BDRSInstallAll();    // 冷/热启动开屏：-needToShowSplashWithLaunchType:launchUrl:launchOptions: 单条闸门
-    BDPRInstallData();   // 「我的」活动轮播 + 推广整排（bannerSwitch -> NO，钱包行高折叠）
+    BDTPInstallAll();    // 传输/下载页底部六条：三条 bool + 一条 Q 数值 + 数据包引导 + 加速试用取视图（各自独立，最后一条带两个只读依赖）
+    BDRSInstallAll();    // BDNC 开屏判断 + App Open 两条独立冷热策略，共三条闸门
+    BDPRInstallData();   // 「我的」活动轮播 + 钱包推广整排 + 活动/广告运营整段
     BDPVInstallAll();    // 「我的」任务卡：两条 -layoutViews post-hook（先布局后隐藏，installer 不做 UI 操作）
     BDRBInstallAll();    // 「去续费」按钮：三条 -vipButton 各自独立安装（默认保留该按钮）
     BDTRInstallAll();     // 底部「库库AI」tab：过滤可见数组，并按构造期/当前根上下文换算四个索引（整组校验）

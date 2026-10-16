@@ -7,7 +7,8 @@
 // 那正是接线缺失或漏改的信号。
 //
 // 覆盖的 header：SettingsMenu.h / FeatureRemoval.h / TabRemoval.h / PersonalRemoval.h /
-// PersonalViewRemoval.h / RenewButtonRemoval.h / SearchDataRemoval.h / SearchViewRemoval.h /
+// PersonalViewRemoval.h / RenewButtonRemoval.h / TransferPromoRemoval.h /
+// SearchDataRemoval.h / SearchViewRemoval.h /
 // MenuEntry.h / ResumeSplashRemoval.h —— 都是产品代码本身，不复制、不改写；
 // 增删组件时同步更新这行与下面的 include 顺序。
 //
@@ -45,6 +46,8 @@ static BOOL BDRemoveTaskCard(void)      { return BDNadPrefsActive(@"BDRemoveTask
 static BOOL BDRemoveTransferGamePromo(void) { return BDNadPrefsActive(@"BDRemoveTransferGamePromo"); }
 static BOOL BDRemoveTransferYikePromo(void) { return BDNadPrefsActive(@"BDRemoveTransferYikePromo"); }
 static BOOL BDRemoveTransferCardPromo(void) { return BDNadPrefsActive(@"BDRemoveTransferCardPromo"); }
+static BOOL BDRemoveTransferDataPromo(void) { return BDNadPrefsActive(@"BDRemoveTransferDataPromo"); }
+static BOOL BDRemoveTransferTrialPromo(void) { return BDNadPrefsActive(@"BDRemoveTransferTrialPromo"); }
 static BOOL BDExperimentHideHomeBanner(void) { return BDNadPrefsActive(@"BDExperimentHideHomeBanner"); }
 static BOOL BDAdMethodsEnabled(void)    { return BDNadPrefsActive(@"BDNadBlockAdMethods"); }
 
@@ -56,7 +59,7 @@ static BOOL BDAdMethodsEnabled(void)    { return BDNadPrefsActive(@"BDNadBlockAd
 // PersonalRemoval.h「我的」活动轮播 + 推广整排（复用安装器）
 // PersonalViewRemoval.h「我的」任务卡 / 金币卡（布局 post-hook + 只读 getter 依赖）
 // RenewButtonRemoval.h「去续费」按钮可隐藏（不 import UIKit，用本文件顶部的真实 UIKit 声明）
-// TransferPromoRemoval.h 一刻相册行内推广 + 下载小游戏引导 + 免流办卡（Foundation only）
+// TransferPromoRemoval.h 一刻相册行内推广 + 下载小游戏引导 + 免流办卡 + 数据包(流量包)引导 + 加速试用促销（Foundation only）
 // HomeBannerExperiment.h 首页顶部横幅容器·实验（UIKit 由本文件顶部 import 提供；默认关闭）
 // SearchDataRemoval.h / SearchViewRemoval.h 搜索框数据层与 UI 层（必须在 FeatureRemoval.h 之后）
 // MenuEntry.h      设置页入口按钮（需要菜单入口 + 安装器）
@@ -89,6 +92,6 @@ void BDNadUICompileCheck(UIViewController *host, NSURL *logURL) {
     BDSRInstallData();                       // 搜索框轮播词数据层
     BDSRInstallView();                       // 搜索框 UI 层三条 post-hook（整组校验）
     BDMEInstallAll();                        // 设置页导航条「网盘净化」入口
-    BDRSInstallAll();                        // 冷/热启动开屏：展示判定闸门（单条 spec）
+    BDRSInstallAll();                        // BDNC 开屏判断 + App Open 冷热策略（三条 spec）
     BDPresentPurificationSettings(host, logURL);   // 菜单入口的真实签名
 }
