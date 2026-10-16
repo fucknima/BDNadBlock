@@ -8,7 +8,8 @@
 //
 // 覆盖的 header：SettingsMenu.h / FeatureRemoval.h / TabRemoval.h / PersonalRemoval.h /
 // PersonalViewRemoval.h / RenewButtonRemoval.h / SearchDataRemoval.h / SearchViewRemoval.h /
-// MenuEntry.h —— 都是产品代码本身，不复制、不改写；增删组件时同步更新这行与下面的 include 顺序。
+// MenuEntry.h / ResumeSplashRemoval.h —— 都是产品代码本身，不复制、不改写；
+// 增删组件时同步更新这行与下面的 include 顺序。
 //
 // 编译运行（macOS + Xcode、iOS 15+ 目标即可，不需要 IPA；工具链取当前选中的 Xcode，CI 也用同一条）：
 //   sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
@@ -41,6 +42,7 @@ static BOOL BDRemovePersonalBanner(void) { return BDNadPrefsActive(@"BDRemovePer
 static BOOL BDRemoveRenewButton(void)   { return BDNadPrefsActive(@"BDRemoveRenewButton"); }
 static BOOL BDRemovePersonalPromotions(void) { return BDNadPrefsActive(@"BDRemovePersonalPromotions"); }
 static BOOL BDRemoveTaskCard(void)      { return BDNadPrefsActive(@"BDRemoveTaskCard"); }
+static BOOL BDAdMethodsEnabled(void)    { return BDNadPrefsActive(@"BDNadBlockAdMethods"); }
 
 #pragma mark - 产品 header（顺序就是它们之间的单向依赖，别调换）
 
@@ -52,6 +54,7 @@ static BOOL BDRemoveTaskCard(void)      { return BDNadPrefsActive(@"BDRemoveTask
 // RenewButtonRemoval.h「去续费」按钮可隐藏（不 import UIKit，用本文件顶部的真实 UIKit 声明）
 // SearchDataRemoval.h / SearchViewRemoval.h 搜索框数据层与 UI 层（必须在 FeatureRemoval.h 之后）
 // MenuEntry.h      设置页入口按钮（需要菜单入口 + 安装器）
+// ResumeSplashRemoval.h 热启动空白开屏展示闸门（在 FeatureRemoval.h 之后，用 BDAdMethodsEnabled）
 #include "SettingsMenu.h"
 #include "FeatureRemoval.h"
 #include "TabRemoval.h"
@@ -61,6 +64,7 @@ static BOOL BDRemoveTaskCard(void)      { return BDNadPrefsActive(@"BDRemoveTask
 #include "SearchDataRemoval.h"
 #include "SearchViewRemoval.h"
 #include "MenuEntry.h"
+#include "ResumeSplashRemoval.h"
 
 #pragma mark - 编译检查入口
 
@@ -75,5 +79,6 @@ void BDNadUICompileCheck(UIViewController *host, NSURL *logURL) {
     BDSRInstallData();                       // 搜索框轮播词数据层
     BDSRInstallView();                       // 搜索框 UI 层三条 post-hook（整组校验）
     BDMEInstallAll();                        // 设置页导航条「网盘净化」入口
+    BDRSInstallAll();                        // 热启动空白开屏：展示判定闸门（单条 spec）
     BDPresentPurificationSettings(host, logURL);   // 菜单入口的真实签名
 }

@@ -129,6 +129,8 @@ static BOOL BDRemovePersonalBanner(void) { return BDNadPrefsActive(@"BDRemovePer
 static BOOL BDRemoveRenewButton(void)   { return BDNadPrefsActive(@"BDRemoveRenewButton"); }
 static BOOL BDRemovePersonalPromotions(void) { return BDNadPrefsActive(@"BDRemovePersonalPromotions"); }
 static BOOL BDRemoveTaskCard(void)      { return BDNadPrefsActive(@"BDRemoveTaskCard"); }
+// 广告展示拦截（旧 18 条 no-op 与热启动空白开屏闸门共用这一个开关）
+static BOOL BDAdMethodsEnabled(void)   { return BDNadPrefsActive(@"BDNadBlockAdMethods"); }
 
 // 网络拦截总门：总开关 + 诊断 + 网络开关的组合，任一不满足就整层不拦。
 // matcher 最前查一次即可，不需要在里面重复判断总开关。
@@ -155,6 +157,7 @@ static BOOL BDBlockNetwork(void) {
 #include "SearchDataRemoval.h"
 #include "SearchViewRemoval.h"
 #include "MenuEntry.h"
+#include "ResumeSplashRemoval.h"   // 热启动空白开屏：展示判定闸门（依赖 FeatureRemoval.h 的安装器与 BDAdMethodsEnabled）
 
 #pragma mark - 网络拦截规则
 
@@ -452,6 +455,7 @@ static void BDNadBlockInit(void) {
     // 精准 feature hook 与搜索/入口 hook 都在这里同步装完（不走下面的 1.5s / 3s 定时器）。
     // 只有冷启动、且这里发生在页面组装之前才生效；真机以 [BDNadFeature] installed 日志为准。
     BDFRInstallAll();
+    BDRSInstallAll();    // 热启动空白开屏：-needToShowSplashWithLaunchType:launchUrl:launchOptions: 单条闸门
     BDPRInstallData();   // 「我的」活动轮播 + 推广整排（bannerSwitch -> NO，钱包行高折叠）
     BDPVInstallAll();    // 「我的」任务卡：两条 -layoutViews post-hook（先布局后隐藏，installer 不做 UI 操作）
     BDRBInstallAll();    // 「去续费」按钮：三条 -vipButton 各自独立安装（默认保留该按钮）
