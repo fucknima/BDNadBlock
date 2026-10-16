@@ -103,7 +103,7 @@ jobs:
           "$bin"
 
       # TransferPromoRemoval.h 的机制测试（真实类名 + 真实 spec，开关用内存假函数）。
-      # 这不是真机测试：只证明三条 gate 的透传/抑制与幂等，不证明传输页真实布局。
+      # 这不是真机测试：只证明三条 bool + 一条 Q 类型选择的透传/抑制与幂等，不证明页面真实布局。
       - name: Host test (TransferPromoRemoval.h, clang++, not a device test)
         run: |
           set -euo pipefail

@@ -97,6 +97,9 @@ FEATURE_HOOKS = [
     ("BDPanTransViewController", "-", "canShowYikeBanner", "B16@0:8"),
     ("BDPanTransferFileTransListViewController", "-", "canShowYikeBanner", "B16@0:8"),
     ("BDPanTransIdleGameManager", "-", "canTransIdleGameWidgetShow", "B16@0:8"),
+    # 免流办卡 widget 的 gate：Q16@0:8（unsigned long long，不是 B/q）。
+    # 拼写 chech 是产品原样，**不要**改成 check。
+    ("BDPanFreeWidgetManage", "-", "chechFreeUnicomWidget", "Q16@0:8"),
 ]
 
 # **依赖** accessor：hook 自己不发消息，是安装前只读校验的对象（校验不过就整条跳过）。

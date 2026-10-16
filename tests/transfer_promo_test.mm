@@ -3,14 +3,18 @@
 // include 的是**真实**产品 header（TransferPromoRemoval.h）与**真实** FeatureRemoval.h 安装器，
 // 只有开关、日志和替身实现是假的：
 //   - 假开关 BDEnabled / BDDumpOnly / BDRemoveRecommend / BDRemoveGameCenter / BDRemoveJobNovel /
-//     BDRemoveTransferYikePromo / BDRemoveTransferGamePromo（两个产品 header 都按同名静态函数引用）
+//     BDRemoveTransferYikePromo / BDRemoveTransferGamePromo / BDRemoveTransferCardPromo
+//     （两个产品 header 都按同名静态函数引用）
 //   - main 里先调一次真实 BDFRInstallAll()（本 TU 没人引用会触发 unused-function；它的目标类在这里
-//     全都不存在，只会逐条 skip，不碰本测试的三个类，也不影响任何断言）
-//   - 三个动态 fake 类（真类名 + 真 selector + 真 B16@0:8 自有方法），原返回值与调用次数可调
+//     全都不存在，只会逐条 skip，不碰本测试的类，也不影响任何断言）
+//   - 四个动态 fake 类（真类名 + 真 selector + 真 encoding 自有方法）：前三个是 B16@0:8 bool，
+//     第四个 `BDPanFreeWidgetManage -chechFreeUnicomWidget` 是 **Q16@0:8（无符号 64 位）**；
+//     原返回值与调用次数都可调
 //
-// 只证明「原实现每次恰好被调一次 / 原 false 不被改写也不 hit / 开关组合决定是否抑制 /
-// 两条 Yike 与游戏互不影响 / 幂等不自指 / 签名或类不符就 skip」。**不是真机测试**：
-// 传输页那行到底会不会留空行、游戏引导的展示时机，都要真机看，host 测试不承诺。
+// 只证明「原实现每次恰好被调一次 / 原值不被改写也不假 hit / 开关组合决定是否抑制 /
+// 三条 bool 与数值那条互不影响 / 幂等不自指 / 签名或类不符就 skip / 数值那条只在原值恰好 3 且
+// 三个开关都开时才改判 0ULL」。**不是真机测试**：传输页那行到底会不会留空行、免流办卡 widget 的
+// 展示时机与底部 fallback，都要真机看，host 测试不承诺。
 //
 // 构建运行（macOS，无需 IPA，无需 Theos）：
 //   clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
@@ -30,6 +34,7 @@ static BOOL gRemoveGameCenter = YES;
 static BOOL gRemoveJobNovel = YES;
 static BOOL gRemoveTransferYikePromo = YES;
 static BOOL gRemoveTransferGamePromo = YES;
+static BOOL gRemoveTransferCardPromo = YES;
 static unsigned gLogLines = 0;
 
 static void BDLog(NSString *fmt, ...) { (void)fmt; gLogLines++; }
@@ -40,6 +45,7 @@ static BOOL BDRemoveGameCenter(void) { return gRemoveGameCenter; }
 static BOOL BDRemoveJobNovel(void) { return gRemoveJobNovel; }
 static BOOL BDRemoveTransferYikePromo(void) { return gRemoveTransferYikePromo; }
 static BOOL BDRemoveTransferGamePromo(void) { return gRemoveTransferGamePromo; }
+static BOOL BDRemoveTransferCardPromo(void) { return gRemoveTransferCardPromo; }
 
 // 顺序即真实接线顺序：先 FeatureRemoval.h（安装器），再 TransferPromoRemoval.h。
 #include "../FeatureRemoval.h"
@@ -85,6 +91,14 @@ static bool BDTPSendBool(id obj, SEL sel) {
     return imp(obj, sel);
 }
 
+// 数值那条：Q 是**无符号 64 位**，必须用 unsigned long long 接（不能用 NSInteger）。
+// 用 object_getClass 取真实类（与 bool 矩阵同一个口径）。
+static unsigned long long BDTPSendU64(id obj, SEL sel) {
+    unsigned long long (*imp)(id, SEL) =
+        (unsigned long long (*)(id, SEL))class_getMethodImplementation(object_getClass(obj), sel);
+    return imp(obj, sel);
+}
+
 #pragma mark - 三个替身实现
 
 static BOOL gYikeTransOrig = YES;      // 原实现的返回值，可调
@@ -115,9 +129,22 @@ static SEL gYikeSel;
 static Class gYikeTransCls, gYikeFileListCls, gGameCls;
 static id gYikeTransInst, gYikeFileListInst, gGameInst;
 
+// 数值那条（免流办卡）：原返回值可调，并同样捕获 self/_cmd 供保真核对。
+static unsigned long long gCardOrig = 0ULL;
+static unsigned gCardCalls = 0;
+static SEL gCardSel;
+static Class gCardCls;
+static id gCardInst;
+
+static unsigned long long PhFreeUnicomCheck(id self, SEL _cmd) {
+    gLastOrigReceiver = self; gLastOrigSEL = _cmd;
+    gCardCalls++; return gCardOrig;
+}
+
 static void setup_real_classes(void) {
     gYikeSel = sel_registerName("canShowYikeBanner");
     SEL gameSel = sel_registerName("canTransIdleGameWidgetShow");
+    gCardSel = sel_registerName("chechFreeUnicomWidget");
 
     gYikeTransCls = BDTPMakeClass("BDPanTransViewController", Nil);
     CHECK(class_addMethod(gYikeTransCls, gYikeSel, (IMP)PhYikeTrans, "B16@0:8"));
@@ -125,10 +152,13 @@ static void setup_real_classes(void) {
     CHECK(class_addMethod(gYikeFileListCls, gYikeSel, (IMP)PhYikeFileList, "B16@0:8"));
     gGameCls = BDTPMakeClass("BDPanTransIdleGameManager", Nil);
     CHECK(class_addMethod(gGameCls, gameSel, (IMP)PhGame, "B16@0:8"));
+    gCardCls = BDTPMakeClass("BDPanFreeWidgetManage", Nil);
+    CHECK(class_addMethod(gCardCls, gCardSel, (IMP)PhFreeUnicomCheck, "Q16@0:8"));
 
     gYikeTransInst = [[gYikeTransCls alloc] init];
     gYikeFileListInst = [[gYikeFileListCls alloc] init];
     gGameInst = [[gGameCls alloc] init];
+    gCardInst = [[gCardCls alloc] init];
 }
 
 static void reset_all(void) {
@@ -136,7 +166,10 @@ static void reset_all(void) {
     gDumpOnly = NO;
     gRemoveTransferYikePromo = YES;
     gRemoveTransferGamePromo = YES;
+    gRemoveTransferCardPromo = YES;
     gYikeTransCalls = gYikeFileListCalls = gGameCalls = 0;
+    gCardCalls = 0;
+    gCardOrig = 0ULL;
 }
 
 #pragma mark - 测试
@@ -157,6 +190,15 @@ static void test_before_install(void) {
     CHECK(gYikeTransCalls == 2);
     gYikeTransOrig = YES;
     CHECK(gLogLines == logsBefore);                             // 安装前不会有任何 hit
+
+    // 数值那条也一样：安装前直接落到原实现，原值原样
+    gCardOrig = 3ULL;
+    CHECK(BDTPSendU64(gCardInst, gCardSel) == 3ULL);
+    CHECK(gCardCalls == 1);
+    gCardOrig = 0ULL;
+    CHECK(BDTPSendU64(gCardInst, gCardSel) == 0ULL);
+    CHECK(gCardCalls == 2);
+    CHECK(gLogLines == logsBefore);
 }
 
 static void test_install(void) {
@@ -165,13 +207,17 @@ static void test_install(void) {
     CHECK(BDTPspecYikeTrans.installed == YES);
     CHECK(BDTPspecYikeFileList.installed == YES);
     CHECK(BDTPspecIdleGame.installed == YES);
+    CHECK(BDTPspecFreeUnicom.installed == YES);
     CHECK(*BDTPspecYikeTrans.orig == (IMP)PhYikeTrans);
     CHECK(*BDTPspecYikeFileList.orig == (IMP)PhYikeFileList);
     CHECK(*BDTPspecIdleGame.orig == (IMP)PhGame);
+    CHECK(*BDTPspecFreeUnicom.orig == (IMP)PhFreeUnicomCheck);
     CHECK(*BDTPspecYikeTrans.orig != (IMP)BDTPYikeTrans);
     CHECK(*BDTPspecIdleGame.orig != (IMP)BDTPIdleGame);
+    CHECK(*BDTPspecFreeUnicom.orig != (IMP)BDTPFreeUnicomCheck);       // 不自指
     CHECK(class_getMethodImplementation(gYikeTransCls, gYikeSel) == (IMP)BDTPYikeTrans);
-    CHECK(gLogLines == logsBefore + 3);                         // 三条各一行 installed
+    CHECK(class_getMethodImplementation(gCardCls, gCardSel) == (IMP)BDTPFreeUnicomCheck);
+    CHECK(gLogLines == logsBefore + 4);                         // 四条各一行 installed
 }
 
 static void test_gate_semantics(void) {
@@ -257,7 +303,10 @@ static void test_reinstall_no_recursion(void) {
     CHECK(*BDTPspecYikeTrans.orig == (IMP)PhYikeTrans);          // 没被写成替换实现
     CHECK(*BDTPspecYikeFileList.orig == (IMP)PhYikeFileList);
     CHECK(*BDTPspecIdleGame.orig == (IMP)PhGame);
-    CHECK(gLogLines == logsBefore + 3);                          // 三行 already installed
+    CHECK(*BDTPspecFreeUnicom.orig == (IMP)PhFreeUnicomCheck);
+    CHECK(*BDTPspecFreeUnicom.orig != (IMP)BDTPFreeUnicomCheck);
+    CHECK(class_getMethodImplementation(gCardCls, gCardSel) == (IMP)BDTPFreeUnicomCheck);
+    CHECK(gLogLines == logsBefore + 4);                          // 四行 already installed
 
     reset_all();
     unsigned hitsBefore = gLogLines;
@@ -265,6 +314,9 @@ static void test_reinstall_no_recursion(void) {
     CHECK(gYikeTransCalls == 1);                                 // 没有自指递归
     CHECK(BDTPSendBool(gGameInst, gameSel) == false);
     CHECK(gGameCalls == 1);
+    gCardOrig = 3ULL;
+    CHECK(BDTPSendU64(gCardInst, gCardSel) == 0ULL);             // 数值那条也真的还能调用、还真抑制
+    CHECK(gCardCalls == 1);
     CHECK(gLogLines == hitsBefore);                              // hit token 已消耗，不再打
 }
 
@@ -326,6 +378,39 @@ static void test_skip_paths(void) {
     CHECK(origSel == NULL);
     CHECK(BDTPspecIdleGame.installed == YES);                    // 已装的那条没被 reset
     CHECK(*BDTPspecIdleGame.orig == (IMP)PhGame);
+
+    // 6) 数值那条的三条不装路径（复用同一 phantom 模式，不另抄用例）
+    //    6a) 真注册 Q16@0:8，spec 期望 Q24@0:8 -> 不装
+    Class cardPhantom = BDTPMakeClass("BDTPPhantomCardEnc", Nil);
+    CHECK(class_addMethod(cardPhantom, gCardSel, (IMP)PhFreeUnicomCheck, "Q16@0:8"));
+    IMP origCardEnc = NULL;
+    BDFRSpec c1 = BDTPTestSpec("BDTPPhantomCardEnc", "chechFreeUnicomWidget", "Q24@0:8", 2,
+                               (IMP)BDTPFreeUnicomCheck, &origCardEnc, "t-card-wrong-enc");
+    CHECK(BDFRInstallSpec(&c1) == NO);
+    CHECK(c1.installed == NO && origCardEnc == NULL);
+
+    //    6b) 参数个数不符（真值 2，spec 期望 3）-> 不装
+    IMP origCardArgc = NULL;
+    BDFRSpec c2 = BDTPTestSpec("BDTPPhantomCardEnc", "chechFreeUnicomWidget", "Q16@0:8", 3,
+                               (IMP)BDTPFreeUnicomCheck, &origCardArgc, "t-card-wrong-argc");
+    CHECK(BDFRInstallSpec(&c2) == NO);
+    CHECK(c2.installed == NO && origCardArgc == NULL);
+
+    //    6c) 只有父类实现 -> 不装，父类槽不动
+    Class cardBase = BDTPMakeClass("BDTPPhantomCardBase", Nil);
+    CHECK(class_addMethod(cardBase, gCardSel, (IMP)PhFreeUnicomCheck, "Q16@0:8"));
+    Class cardSub = BDTPMakeClass("BDTPPhantomCardSub", cardBase);
+    IMP origCardSub = NULL;
+    BDFRSpec c3 = BDTPTestSpec("BDTPPhantomCardSub", "chechFreeUnicomWidget", "Q16@0:8", 2,
+                               (IMP)BDTPFreeUnicomCheck, &origCardSub, "t-card-inherited-only");
+    CHECK(BDFRInstallSpec(&c3) == NO);
+    CHECK(c3.installed == NO && origCardSub == NULL);
+    CHECK(class_getMethodImplementation(cardSub, gCardSel) == (IMP)PhFreeUnicomCheck);
+    CHECK(class_getMethodImplementation(cardSub, gCardSel) != (IMP)BDTPFreeUnicomCheck);
+
+    // 以上失败都不许动已装好的第四条真实 spec
+    CHECK(BDTPspecFreeUnicom.installed == YES);
+    CHECK(*BDTPspecFreeUnicom.orig == (IMP)PhFreeUnicomCheck);
 }
 
 #pragma mark - 真值表矩阵（3 条真实 spec × 真实 instance × 开关组合）
@@ -423,6 +508,102 @@ static void test_gate_matrix_all_specs(void) {
     reset_all();
 }
 
+#pragma mark - 数值闸门（免流办卡）：原值 × 三个开关 的真值表
+
+// 规格（不是产品实现的副本）：只有原值**恰好 == 3** 且门控生效（总开关开 + 非诊断 + Card 开关开）
+// 才改判 0；其它任何值（含 0/1/2/4 与高位未知值）一律原样返回。
+static unsigned long long BDTPExpectedCard(unsigned long long original,
+                                           BOOL enabled, BOOL dumpOnly, BOOL independent) {
+    BOOL gate = enabled && !dumpOnly && independent;
+    return (original == 3ULL && gate) ? 0ULL : original;
+}
+
+static void test_card_numeric_gate(void) {
+    // 原值集合刻意包含：原生已知的 0/1/2/3、未知的 4/7、最高位、全 1
+    const unsigned long long originals[] = {
+        0ULL, 1ULL, 2ULL, 3ULL, 4ULL, 7ULL,
+        0x8000000000000000ULL,     // (1ULL << 63)
+        0xFFFFFFFFFFFFFFFFULL,     // ULLONG_MAX
+    };
+    const unsigned count = (unsigned)(sizeof(originals) / sizeof(originals[0]));
+    const BOOL bools[2] = {YES, NO};
+    unsigned checked = 0;
+    BOOL hitSeen = NO;                    // 对应产品里的 dispatch_once hit token
+
+    for (unsigned e = 0; e < 2; e++)
+    for (unsigned d = 0; d < 2; d++)
+    for (unsigned i = 0; i < 2; i++)
+    for (unsigned k = 0; k < count; k++) {
+        gEnabled = bools[e];
+        gDumpOnly = bools[d];
+        gRemoveTransferCardPromo = bools[i];
+        gCardOrig = originals[k];
+        gLastOrigReceiver = nil;
+        gLastOrigSEL = NULL;
+        unsigned callsBefore = gCardCalls;
+        unsigned linesBefore = gLogLines;
+
+        unsigned long long want = BDTPExpectedCard(originals[k], bools[e], bools[d], bools[i]);
+        unsigned long long got = BDTPSendU64(gCardInst, gCardSel);
+        checked++;
+
+        if (got != want) {
+            fprintf(stderr,
+                    "FAIL %s:%d: card orig=0x%llx enabled=%d dump=%d indep=%d -> 0x%llx (want 0x%llx)\n",
+                    __FILE__, __LINE__, originals[k], bools[e], bools[d], bools[i], got, want);
+            gFailures++;
+        }
+        CHECK(gCardCalls == callsBefore + 1);        // 原实现每次恰好一次（无重复、无漏调）
+        CHECK(gLastOrigReceiver == gCardInst);       // 收到的就是同一个真实 instance
+        CHECK(gLastOrigSEL == gCardSel);             // SEL 原样透传
+
+        if (!hitSeen && originals[k] == 3ULL && bools[e] && !bools[d] && bools[i]) {
+            CHECK(gLogLines == linesBefore + 1);     // 首次真正抑制：恰好一行
+            hitSeen = YES;
+        } else {
+            CHECK(gLogLines == linesBefore);         // 其它任何组合都不假记 hit
+        }
+    }
+    CHECK(checked == 8 * count);
+    CHECK(hitSeen);                                  // 矩阵里确实发生过一次真正抑制
+
+    // 之后继续「3 + 全开」也不再打日志（dispatch_once）
+    gEnabled = YES; gDumpOnly = NO; gRemoveTransferCardPromo = YES; gCardOrig = 3ULL;
+    unsigned quiet = gLogLines;
+    for (int k = 0; k < 3; k++) CHECK(BDTPSendU64(gCardInst, gCardSel) == 0ULL);
+    CHECK(gLogLines == quiet);
+    CHECK(gCardCalls == 8 * count + 3);
+
+    // 互不影响（此时四个 hit token 都已消耗，全程不该有新日志）
+    unsigned noNewLogs = gLogLines;
+    reset_all();                                     // Card 打开、计数归零、原值回到 0
+    CHECK(gCardOrig == 0ULL);
+
+    gRemoveTransferCardPromo = NO;                   // ① Card 关：数值那条精确透传 3
+    gCardOrig = 3ULL;
+    CHECK(BDTPSendU64(gCardInst, gCardSel) == 3ULL);
+    CHECK(gCardCalls == 1);
+    gYikeTransOrig = YES;
+    CHECK(BDTPSendBool(gYikeTransInst, gYikeSel) == false);   // Yike 不受 Card 开关影响
+    CHECK(gYikeTransCalls == 1);
+
+    gRemoveTransferCardPromo = YES;                  // ② 两条 bool 关：Card 照旧抑制
+    gRemoveTransferYikePromo = NO;
+    gRemoveTransferGamePromo = NO;
+    gCardOrig = 3ULL;
+    CHECK(BDTPSendU64(gCardInst, gCardSel) == 0ULL);
+    CHECK(gCardCalls == 2);
+    CHECK(BDTPSendBool(gYikeTransInst, gYikeSel) == true);    // 自己的开关关 -> 透传
+    CHECK(gYikeTransCalls == 2);
+    CHECK(BDTPSendBool(gGameInst, sel_registerName("canTransIdleGameWidgetShow")) == true);
+    CHECK(gGameCalls == 1);
+    gRemoveTransferYikePromo = YES;
+    gRemoveTransferGamePromo = YES;
+
+    CHECK(gLogLines == noNewLogs);                   // 上面全部不产生新 hit
+    reset_all();
+}
+
 #pragma mark - main
 
 int main(void) {
@@ -437,6 +618,7 @@ int main(void) {
         test_install();
         test_gate_semantics();
         test_gate_matrix_all_specs();      // 首次 hit 断言之后跑：token 已消耗，只验真值表与保真
+        test_card_numeric_gate();          // 数值那条有自己的 hit token；上面那条 bool 矩阵不碰它
         test_global_and_dump_passthrough();
         test_reinstall_no_recursion();
         test_skip_paths();

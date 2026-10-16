@@ -1,7 +1,7 @@
 # BDNadBlock
 
-百度网盘 (com.baidu.netdisk) **13.32.2** 的净化 tweak：一个设置菜单 + **17 个保留配置键**
-（16 个可切换项 + 1 个「年卡待定位」的说明行）。菜单之下挂两层广告拦截
+百度网盘 (com.baidu.netdisk) **13.32.2** 的净化 tweak：一个设置菜单 + **18 个保留配置键**
+（17 个可切换项 + 1 个「年卡待定位」的说明行）。菜单之下挂两层广告拦截
 （网络规则 / 展示方法）和若干「原生组装或纯显示谓词」处的精准 hook。
 
 **实验版本。** 编译通过、selector 存在、hook 装上，都**不等于**真机生效。日志里两条也不同：
@@ -25,8 +25,8 @@
 
 ## 开关
 
-**唯一默认值表在 `Preferences.h`**（17 个保留配置键），菜单标题/分组也从那张表取，代码里不再抄第二份。
-只写本组件这 17 个键到 `NSUserDefaults`，不写账号、缓存或原生偏好。
+**唯一默认值表在 `Preferences.h`**（18 个保留配置键），菜单标题/分组也从那张表取，代码里不再抄第二份。
+只写本组件这 18 个键到 `NSUserDefaults`，不写账号、缓存或原生偏好。
 
 **保存后必须彻底退出 App 再冷启动才生效**：运行期所有 hook 读的是**进程启动快照**，
 菜单改值不改当前进程、不热改 UIKit、不自动退出、不清网盘数据。
@@ -49,6 +49,7 @@
 | `BDNadBlockAdMethods` | 广告展示拦截·实验 | YES | 实验 |
 | `BDRemoveTransferYikePromo` | 隐藏传输页一刻相册 | YES | 已接线（传输页推广） |
 | `BDRemoveTransferGamePromo` | 隐藏下载小游戏引导 | YES | 已接线（传输页推广） |
+| `BDRemoveTransferCardPromo` | 隐藏免流办卡推广 | YES | 已接线（免流办卡 widget gate） |
 | `BDNadBlockDumpOnly` | 仅诊断，不执行净化 | **NO** | 诊断 |
 
 开关 **ON = 去除/拦截**。所有去除类开关的前置条件都是
@@ -73,14 +74,18 @@
 | 我的·续费按钮 | 三处 `-vipButton` getter（`BDPanPersonNewVipCardHeaderView` / `BDPanPersonVipHeaderView` / `BDPanPersonAdvanceVIPHeaderView`）各自独立隐藏按钮 | **默认 NO**；只藏按钮，**整卡既有会员点击行为保留**；三条互不依赖 |
 | 传输页·一刻相册推广 | 两条 `-canShowYikeBanner`（`-[BDPanTransViewController …]` 与 `-[BDPanTransferFileTransListViewController …]`，各自 `B16@0:8`、类自有实例方法）**先调原实现取原 bool**，仅「原 true 且总开关开、非诊断、`BDRemoveTransferYikePromo` 开」时改判 false | 第一条宿主已证：gate 为 NO 时走原生行高入口的共同返回（**行高 0、无空行**），与「用户手动关闭」同一条布局；**不改索引/高度/section**。第二条 Yike 的运行期展示影响**尚未验证**，保留它只为「原方法先调一次 + 精确透传」 |
 | 传输页·下载小游戏引导 | `-[BDPanTransIdleGameManager canTransIdleGameWidgetShow]`（`B16@0:8`）同样先调原实现，仅在开关生效且原为 true 时改判 false | 原生消费点本就有「gate 为 NO → 直接返回、不存 block、不建 widget」的分支；**不改 AB gate、任务、速度、暂停、并发** |
+| 免流办卡推广 | `-[BDPanFreeWidgetManage chechFreeUnicomWidget]`（`Q16@0:8`，方法名拼写以产品为准）**先调原实现一次**，仅在开关生效且原结果为 **3** 时改判为 **0** | 只动这一个返回值：`0/1/2` 与其它 unsigned 值**原样透传**（`1`=免流已生效、`2`=激活提示都保留）；不写 `had*` 等原生偏好、不碰网络/通知/window/高度。3 对应的是办卡推广分支，native 拿到 0 后**不展示**它。**注意原生 fallback**：`refreshWidget` 里这条被否决后会继续判断其它 widget（数据包/备份/试用等），**所以不是「底部从此全空」**，本轮也不改这些 fallback。截图文案到运行实例**没有真机证据**（静态对应，设备效果未验） |
 | 热启动空白开屏 | `-[BDNCUIAdvertisesManage needToShowSplashWithLaunchType:launchUrl:launchOptions:]`（`B40@0:8q16@24@32`，自有实例方法）先调原实现取原 bool，仅当 `launchType` 是 2 或 3 且原结果为真时改判为假 | 受 `BDNadBlockAdMethods` 控制（总开关开且非诊断）。**原策略、状态消费与埋点全部照跑**，只改返回值；`launchType` 0/1/负值/未知正值与冷启动一律不变；**不碰 window / timer / 系统前台恢复 / 时长 / 竞价**。详见下文 |
 
 各组件都复用 `FeatureRemoval.h` 的同一套安装原语（`BDFRSpec` / `BDFRResolve` /
 `BDFRCanAttach` / `BDFRAttach` / `BDFRInstallSpec` / `BDFRSuppressed`），不另抄一份。
 传输页这两个开关**不依赖** `BDNadBlockAdMethods`（那条只管旧 18 个广告 selector 与热启动开屏）：
-生效条件是总开关开、非诊断、且各自开关开，改完**下次冷启动**才生效。
-本包**未移除**：传输页底部办卡推广条（native 归属仍在定位，本包不提供该开关）、
-企业版传输页的 Yike 消费者；文件 / AI 推荐等正常功能一律保留。
+生效条件是总开关开、非诊断、且各自开关开，改完**下次冷启动**才生效；免流办卡那条同样受这三层开关控制、
+**不依赖** `BDNadBlockAdMethods`，也不热更新。
+本包已接线非企业 manager 的免流办卡 gate（`BDRemoveTransferCardPromo`）。同款 widget controller
+还被备份详情页引用，因此不声称只影响传输页；备份详情页实际是否走到办卡分支尚未验证。
+企业 manager 自有同名实现未改动，`refreshWidget` 的其它 fallback 分支也不在本补丁内；
+企业版传输页的 Yike 消费者也仍未处理。文件 / AI 推荐等正常功能一律保留。
 首页年卡促销（`BDRemoveHomePromo`）**本版未实施**：静态定位未收束，用户选择先做其它项；
 菜单里那一行只有说明文案、没有开关，也不读写它的 saved 值，避免显示成「默认 YES 已生效」。
 规格表里那个默认 YES 只是**保留配置**，启动日志里的 `active BDRemoveHomePromo = 1`
@@ -171,11 +176,14 @@ App 升级后必须重跑 `verify_selectors.py`：selector 失效会直接报出
 
 **CI**：`gh workflow run Build --ref <branch>`（或 Actions 页手动 dispatch）。它跑上面那些
 host 测试、UIKit `-fsyntax-only` 编译、再用 Theos 出 dylib；只有 `main` 分支产出可下载 artifact。
-传输页这两项（一刻相册 + 下载小游戏引导）的功能代码**已接线**；**收尾提交 `90ff662` 的
-10 组 Foundation 机制测试（含传输页真值表矩阵）、UIKit strict syntax 与 arm64 / arm64e 双架构构建已通过**：
-<https://github.com/fucknima/BDNadBlock/actions/runs/38888485278>。
-该提交已移除未接线的办卡键；验证分支**没有可下载 artifact**，
-等 `main` 成功才发布。这些都只是**编译与机制**层面的证据：**真机效果未验，编译与机制测试都不等于真机生效。**
+**已发布基线**是 `main` 的 `7e4d8e92`：**10 组 Foundation 机制测试（含传输页真值表矩阵）、UIKit strict
+syntax 与 arm64 / arm64e 双架构构建均已通过**（CI run `38888673604`）——
+那一版只含一刻相册 + 下载小游戏引导两项，**不含免流办卡开关**。
+免流办卡补丁（新增 `BDRemoveTransferCardPromo` 与它的 widget gate）在提交 `1e869d5` 的
+[CI 38890609380](https://github.com/fucknima/BDNadBlock/actions/runs/38890609380) 中已通过
+10 组机制测试（含 48 组 bool 与 64 组办卡数值组合）、UIKit 严格编译及双架构构建。
+验证分支没有可下载 artifact，等 `main` 成功才发布；**真机办卡条效果仍未验证**。
+这些都只是**编译与机制**层面的证据：**真机效果未验，编译与机制测试都不等于真机生效。**
 
 ## 防崩
 
