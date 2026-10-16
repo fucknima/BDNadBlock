@@ -94,9 +94,17 @@ jobs:
             -framework Foundation -o "$bin" tests/task_card_test.mm
           "$bin"
 
+      - name: Host test (ResumeSplashRemoval.h, clang++, not a device test)
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/resume_splash_test"
+          clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
+            -framework Foundation -o "$bin" tests/resume_splash_test.mm
+          "$bin"
+
       # UIKit 组件的编译检查：SettingsMenu / FeatureRemoval / TabRemoval / PersonalRemoval /
       # PersonalViewRemoval / RenewButtonRemoval / SearchDataRemoval / SearchViewRemoval /
-      # MenuEntry 九个产品 header，
+      # MenuEntry / ResumeSplashRemoval 十个产品 header，
       # 用真实 iOS SDK 过一遍 -Werror，并由 tests/ui_compile.mm 里的最小调用 TU
       # 把每个入口都引用到（不靠 -Wno、不删函数）。
       # 仅 -fsyntax-only：不运行、不产出 app、不启模拟器、不建工程，不是 UI 运行测试。

@@ -69,6 +69,7 @@
 | 我的·推广整排 | `-[BDPanPersonalWalletSection heightForView]` → `-6.0`；`-[BDPanPersonalCenterWalletSection heightForView]` → `-3.0`（各 class 自己的原生收起值） | 只影响读这两个 `heightForView` 的路径；不清数据、不拦接口，该区域请求是否仍发生未验证 |
 | 我的·任务卡 | `-[BDPanPersonalSpaceSection layoutViews]` / `-[BDPanPersonalSpaceAndPointSection layoutViews]` post-hook → 隐藏各自 `pointsCard` | 先布局后隐藏；**容量卡与行高常量（80.0 / 96.0）一点没碰**，任务卡位置允许留空 |
 | 我的·续费按钮 | 三处 `-vipButton` getter（`BDPanPersonNewVipCardHeaderView` / `BDPanPersonVipHeaderView` / `BDPanPersonAdvanceVIPHeaderView`）各自独立隐藏按钮 | **默认 NO**；只藏按钮，**整卡既有会员点击行为保留**；三条互不依赖 |
+| 热启动空白开屏 | `-[BDNCUIAdvertisesManage needToShowSplashWithLaunchType:launchUrl:launchOptions:]`（`B40@0:8q16@24@32`，自有实例方法）先调原实现取原 bool，仅当 `launchType` 是 2 或 3 且原结果为真时改判为假 | 受 `BDNadBlockAdMethods` 控制（总开关开且非诊断）。**原策略、状态消费与埋点全部照跑**，只改返回值；`launchType` 0/1/负值/未知正值与冷启动一律不变；**不碰 window / timer / 系统前台恢复 / 时长 / 竞价**。详见下文 |
 
 各组件都复用 `FeatureRemoval.h` 的同一套安装原语（`BDFRSpec` / `BDFRResolve` /
 `BDFRCanAttach` / `BDFRAttach` / `BDFRInstallSpec` / `BDFRSuppressed`），不另抄一份。
@@ -112,6 +113,27 @@ bcebos 的 `cmpkg` 整目录（里面还有 `1_swan-core` 小程序运行时）�
 返回类型已核对为 11 个 `v` / 7 个 `B`；**这一层**的通用 no-op 只保证 `x0` 有效，
 所以返回结构体/浮点/复数的方法在这一层一律跳过。**超时与回调行为真机未验证。**
 与网络层是两个独立开关，可单独关掉定位是哪一层。
+
+## 热启动空白开屏修复（受 `BDNadBlockAdMethods` 控制）
+
+症状：从后台放一段时间回到前台，广告素材已经没有了，但**空白开屏仍然出现几秒才消失**。
+本项让原生自己在「该不该展示」那一步判定为「不展示」，于是原生走它自带的收尾路径，不进入建窗。
+
+- 落点：`-[BDNCUIAdvertisesManage needToShowSplashWithLaunchType:launchUrl:launchOptions:]`
+  （`B40@0:8q16@24@32`，自有实例方法，argc 5）。
+- 生效条件：总开关开 **且** 非诊断 **且** `BDNadBlockAdMethods` 开（沿用现有开关，未新增设置键）。
+- 顺序：**先调一次原实现**拿到原 bool，原方法对内部状态的消费、策略检查与埋点全部照跑；
+  只有当 `launchType` 是 **2 或 3**（热启动）且原结果为真时，才把返回值改成假并记一次 hit 日志。
+- 不改动：`launchType` 0（冷启动）/ 1 / 负值 / 未知正值，以及任一开关关闭、原结果本来就为假 —— 一律精确透传原 bool。
+- 不碰：窗口的创建或关闭、任何定时器与超时、时长统计、竞价任务、系统前台恢复链路，也不读也不写被 hook 类的私有状态。
+- 闸门位置在建窗之前：原生的 not-show 分支自己会 `setIsNotSplashWindow` / `setDecidedNotShow` 并返回 NO，
+  不进入 `dynamicAdvertiseTaskWithLaunchType:`，本组件不补任何收尾。
+
+**该提交（`e91f4e6`）的 9 组 Foundation 机制测试（含本项）、UIKit strict syntax 编译与
+arm64 / arm64e 双架构构建均已通过：
+<https://github.com/fucknima/BDNadBlock/actions/runs/38863989849>；
+真机上「空白开屏是否消失」仍未验证。**
+机制测试只覆盖开关组合、参数透传、原实现调用次数与安装失败路径，不代表设备上的空白开屏已不再出现。
 
 ## 怎么复核
 
