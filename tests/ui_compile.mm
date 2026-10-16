@@ -44,6 +44,7 @@ static BOOL BDRemovePersonalPromotions(void) { return BDNadPrefsActive(@"BDRemov
 static BOOL BDRemoveTaskCard(void)      { return BDNadPrefsActive(@"BDRemoveTaskCard"); }
 static BOOL BDRemoveTransferGamePromo(void) { return BDNadPrefsActive(@"BDRemoveTransferGamePromo"); }
 static BOOL BDRemoveTransferYikePromo(void) { return BDNadPrefsActive(@"BDRemoveTransferYikePromo"); }
+static BOOL BDRemoveTransferCardPromo(void) { return BDNadPrefsActive(@"BDRemoveTransferCardPromo"); }
 static BOOL BDAdMethodsEnabled(void)    { return BDNadPrefsActive(@"BDNadBlockAdMethods"); }
 
 #pragma mark - 产品 header（顺序就是它们之间的单向依赖，别调换）
@@ -54,7 +55,7 @@ static BOOL BDAdMethodsEnabled(void)    { return BDNadPrefsActive(@"BDNadBlockAd
 // PersonalRemoval.h「我的」活动轮播 + 推广整排（复用安装器）
 // PersonalViewRemoval.h「我的」任务卡 / 金币卡（布局 post-hook + 只读 getter 依赖）
 // RenewButtonRemoval.h「去续费」按钮可隐藏（不 import UIKit，用本文件顶部的真实 UIKit 声明）
-// TransferPromoRemoval.h 传输页一刻相册行内推广 + 下载小游戏引导（Foundation only）
+// TransferPromoRemoval.h 一刻相册行内推广 + 下载小游戏引导 + 免流办卡（Foundation only）
 // SearchDataRemoval.h / SearchViewRemoval.h 搜索框数据层与 UI 层（必须在 FeatureRemoval.h 之后）
 // MenuEntry.h      设置页入口按钮（需要菜单入口 + 安装器）
 // ResumeSplashRemoval.h 热启动空白开屏展示闸门（在 FeatureRemoval.h 之后，用 BDAdMethodsEnabled）

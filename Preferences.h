@@ -62,6 +62,7 @@ static const BDNadPrefsSpec BDNadPrefsSpecs[] = {
     // 传输页推广（一刻相册是行内推广、小游戏是引导，不都在页面底部）
     {"BDRemoveTransferYikePromo",  "隐藏传输页一刻相册",     YES, BDNadPrefsGroupAds},
     {"BDRemoveTransferGamePromo",  "隐藏下载小游戏引导",     YES, BDNadPrefsGroupAds},
+    {"BDRemoveTransferCardPromo",  "隐藏免流办卡推广",       YES, BDNadPrefsGroupAds},
     // 诊断
     {"BDNadBlockDumpOnly",         "仅诊断，不执行净化",     NO,  BDNadPrefsGroupDiagnostics},
 };

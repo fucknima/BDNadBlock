@@ -41,6 +41,7 @@
 | `BDNadBlockAdMethods` | 广告展示拦截·实验 | YES | 广告 |
 | `BDRemoveTransferYikePromo` | 隐藏传输页一刻相册 | YES | 广告 |
 | `BDRemoveTransferGamePromo` | 隐藏下载小游戏引导 | YES | 广告 |
+| `BDRemoveTransferCardPromo` | 隐藏免流办卡推广 | YES | 广告 |
 | `BDNadBlockDumpOnly` | 仅诊断，不执行净化 | **NO** | 诊断 |
 
 开关 **ON = 去除/拦截**。`BDNadBlockEnabled` / `BDNadBlockNetwork` /
@@ -49,12 +50,18 @@
 
 `BDRemoveHomePromo`（首页年卡促销）**功能本版未实施**：静态定位未收束，用户选择先做其它项。
 菜单里那一行只呈现副标题「待定位，本版本暂时保留」，没有 `UISwitch`、不读也不写该键的
-saved 值 —— 免得显示成「默认 YES 已生效」。规格表现有 17 个键，旧 15 个键与默认值不变，
+saved 值 —— 免得显示成「默认 YES 已生效」。规格表现有 18 个键，旧 17 个键与默认值不变，
 其中这一个的默认 YES **只是保留配置**；启动日志里 `active BDRemoveHomePromo = 1`
 也只是快照值，**不是该功能已接线的证据**。等定位收束后再接上真实开关。
 
-传输页新增两项各自独立，均受总开关与非诊断条件控制，不依赖 `BDNadBlockAdMethods`。
-截图底部免流办卡条尚未定位，本版不提供未接线的办卡开关；企业版一刻相册未纳入本版。
+传输页新增三项各自独立，均受总开关与非诊断条件控制，**不依赖** `BDNadBlockAdMethods`，改完冷启动生效：
+一刻相册（两条 `-canShowYikeBanner`）、下载小游戏引导、以及免流办卡的 widget gate
+（`-[BDPanFreeWidgetManage chechFreeUnicomWidget]`，`Q16@0:8`：只有原值 3 → 0，`0/1/2` 与其它
+unsigned 值原样透传）。该 widget gate 只覆盖这一处判定：`refreshWidget` 里被否决后仍会继续判断
+其它 widget（数据包/备份/试用等），**不代表底部从此全空**。同款 controller 还被备份详情页引用，
+该页实际是否进入办卡分支未验证，不能断言只影响传输页。企业 manager 自有同名实现未被替换；企业版孪生 widget 与企业版一刻相册
+都不在本版范围内（企业 Yike 的 base gate 实测直接 `mov 0` 返回，这条边界保留未处理）。
+截图与运行实例之间**没有真机证据**：文案与分支只做到静态对应，设备效果未验。
 
 ## 3. 函数名（主会话按这些接线）
 
@@ -137,11 +144,11 @@ present 之前还有主线程/modal 守卫，守卫拒绝时菜单不会出现�
   ```
   以及 `tests/ui_compile.mm` 的 iOS SDK `-fsyntax-only` 编译（覆盖 UIKit 声明）。
   跑法与最新结果见 README「怎么复核」。
-- **CI 通过 ≠ 真机生效**：已核验基线是提交 `2b6e48e` 的 CI run `38843317180`
-  （<https://github.com/fucknima/BDNadBlock/actions/runs/38843317180>）：
-  8 组 Foundation 机制测试 + UIKit strict syntax + arm64/arm64e 双架构构建全部通过，
-  **含底部 tab 根上下文（`customTabBar`）的新修复**；该验证分支**没有可下载 artifact**，
-  等 `main` 成功才发布。这些都只是**编译与机制**层面的证据。
+- **CI 通过 ≠ 真机生效**：已发布基线是 `main` 的 `7e4d8e92`（CI run `38888673604`）：
+  10 组 Foundation 机制测试 + UIKit strict syntax + arm64/arm64e 双架构构建全部通过，
+  该版本只含一刻相册与下载小游戏两项，**不含免流办卡开关**；验证分支**没有可下载 artifact**，
+  等 `main` 成功才发布。含免流办卡 gate 的本次补丁**尚待最终 CI 与真机验证**，
+  两者都只是**编译与机制**层面的证据。
 - **真机 UI 仍未验证**：菜单是否出现在真实设置页、开关是否可切、分享面板、
   冷启动后是否真的生效，都要装包后人工确认。
 - **持久化未跨进程验证**：host 测试里“新 defaults 实例读到已保存值”只是**同进程 suite
