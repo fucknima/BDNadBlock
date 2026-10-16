@@ -165,14 +165,16 @@ present 之前还有主线程/modal 守卫，守卫拒绝时菜单不会出现�
   ```
   以及 `tests/ui_compile.mm` 的 iOS SDK `-fsyntax-only` 编译（覆盖 UIKit 声明）。
   跑法与最新结果见 README「怎么复核」。
-- **CI 通过 ≠ 真机生效**：已发布基线是 `main` 的 `664a722`（CI run `38891349121`）：
+- **CI 通过 ≠ 真机生效**：办卡修复历史基线是 `main` 的 `664a722`（CI run `38891349121`）：
   10 组 Foundation 机制测试 + UIKit strict syntax + arm64/arm64e 双架构构建全部通过，
   验证分支**没有可下载 artifact**，等 `main` 成功才发布。免流办卡 gate 的提交 `1e869d5` 已通过
   [CI 38890609380](https://github.com/fucknima/BDNadBlock/actions/runs/38890609380) 的10组机制测试、
   UIKit严格编译及双架构构建；**办卡条真机效果仍未验证**。
   首页横幅容器实验提交 `d080dad` 的[CI 38905984074](https://github.com/fucknima/BDNadBlock/actions/runs/38905984074)
   已通过11组host机制测试、真实UIKit严格编译及双架构构建，真机效果仍未验证 ——
-  这些都只是**编译与机制**层面的证据。
+  本轮开屏闸门扩到 0/2/3 的代码提交 `3989739` 已通过
+  [CI 38916406687](https://github.com/fucknima/BDNadBlock/actions/runs/38916406687)：11 组机制测试（含开屏96组组合）、
+  真实 UIKit 严格编译及双架构构建；验证分支没有下载产物。以上都只是**编译与机制**层面的证据。
 - **真机 UI 仍未验证**：菜单是否出现在真实设置页、开关是否可切、分享面板、
   冷启动后是否真的生效，都要装包后人工确认。
 - **持久化未跨进程验证**：host 测试里“新 defaults 实例读到已保存值”只是**同进程 suite

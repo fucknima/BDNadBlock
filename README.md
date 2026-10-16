@@ -171,7 +171,9 @@ bcebos 的 `cmpkg` 整目录（里面还有 `1_swan-core` 小程序运行时）�
 arm64 / arm64e 双架构构建通过：
 <https://github.com/fucknima/BDNadBlock/actions/runs/38863989849>。
 **那次通过的是「只覆盖热启动」的版本，冷启动覆盖是后来扩的**，不在那个 run 里。
-本轮扩到 0/2/3 的补丁 **CI 尚未运行**，结果未预写。
+本轮扩到 0/2/3 的代码提交 `3989739` 已通过
+[CI 38916406687](https://github.com/fucknima/BDNadBlock/actions/runs/38916406687)：
+11 组机制测试（含开屏 96 组组合回归）、真实 UIKit 严格编译及 arm64 / arm64e 构建；验证分支未上传产物。
 真机上「空白开屏 / 全屏开屏是否消失」仍未验证。
 机制测试只覆盖开关组合、参数透传、原实现调用次数与安装失败路径，不代表设备上的开屏已不再出现。
 
@@ -219,7 +221,7 @@ App 升级后必须重跑 `verify_selectors.py`：selector 失效会直接报出
 
 **CI**：`gh workflow run Build --ref <branch>`（或 Actions 页手动 dispatch）。它跑上面那些
 host 测试、UIKit `-fsyntax-only` 编译、再用 Theos 出 dylib；只有 `main` 分支产出可下载 artifact。
-**已发布基线**是 `main` 的 `664a722`（CI run `38891349121`）：含 10 组 Foundation 机制测试、
+**办卡修复历史基线**是 `main` 的 `664a722`（CI run `38891349121`）：含 10 组 Foundation 机制测试、
 UIKit strict syntax 与 arm64 / arm64e 双架构构建；此前 `7e4d8e92`（run `38888673604`）
 只含一刻相册 + 下载小游戏两项，免流办卡补丁在 `1e869d5` 的
 [CI 38890609380](https://github.com/fucknima/BDNadBlock/actions/runs/38890609380) 中通过
@@ -230,7 +232,7 @@ UIKit strict syntax 与 arm64 / arm64e 双架构构建；此前 `7e4d8e92`（run
 **该实验的真机效果仍未验证**。
 **最近一次历史基线**是 `main` 的 `b6a2c42`（CI run `38906342452`）：11 组 host 机制测试、
 真实 UIKit 严格编译与 arm64 / arm64e 双架构构建全部通过。
-**本轮「开屏闸门扩到 0/2/3」的补丁 CI 尚未运行**，本文不预写它的结果、也不预写新 artifact；
+**本轮「开屏闸门扩到 0/2/3」代码提交 `3989739` 的验证 CI `38916406687` 已通过**，仅 `main` 发布 CI 成功后提供下载；
 `BDExperimentHideHomeBanner` 仍默认关闭，既有净化项一个都没有删除。
 这些都只是**编译与机制**层面的证据：**真机效果未验，编译与机制测试都不等于真机生效。**
 
