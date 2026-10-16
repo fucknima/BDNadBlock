@@ -1,8 +1,9 @@
 # BDNadBlock
 
-百度网盘 (com.baidu.netdisk) **13.32.2** 的净化 tweak：一个设置菜单 + **19 个保留配置键**
-（18 个可切换项 + 1 个「年卡待定位」的说明行）。菜单之下挂两层广告拦截
-（网络规则 / 展示方法）和若干「原生组装或纯显示谓词」处的精准 hook。
+百度网盘 (com.baidu.netdisk) **13.35.5**（build `13.35.5.6`）的净化 tweak：
+一个设置菜单 + **19 个保留配置键**（18 个可切换项 + 1 个「年卡待定位」的说明行）。
+菜单之下挂两层广告拦截（网络规则 / 展示方法）和若干「原生组装或纯显示谓词」处的精准 hook。
+**13.32.2 的既有功能保留**：本轮只扩展开屏闸门的冷启动覆盖，其余项目仅复核签名元数据，见下方「目标版本与升级边界」。
 
 **实验版本。** 编译通过、selector 存在、hook 装上，都**不等于**真机生效。日志里两条也不同：
 `installed` = 替换实现装上了，`hit` = 本组件的抑制分支执行过一次；**两者都不是页面效果验证**。
@@ -77,11 +78,11 @@
 | 传输页·一刻相册推广 | 两条 `-canShowYikeBanner`（`-[BDPanTransViewController …]` 与 `-[BDPanTransferFileTransListViewController …]`，各自 `B16@0:8`、类自有实例方法）**先调原实现取原 bool**，仅「原 true 且总开关开、非诊断、`BDRemoveTransferYikePromo` 开」时改判 false | 第一条宿主已证：gate 为 NO 时走原生行高入口的共同返回（**行高 0、无空行**），与「用户手动关闭」同一条布局；**不改索引/高度/section**。第二条 Yike 的运行期展示影响**尚未验证**，保留它只为「原方法先调一次 + 精确透传」 |
 | 传输页·下载小游戏引导 | `-[BDPanTransIdleGameManager canTransIdleGameWidgetShow]`（`B16@0:8`）同样先调原实现，仅在开关生效且原为 true 时改判 false | 原生消费点本就有「gate 为 NO → 直接返回、不存 block、不建 widget」的分支；**不改 AB gate、任务、速度、暂停、并发** |
 | 免流办卡推广 | `-[BDPanFreeWidgetManage chechFreeUnicomWidget]`（`Q16@0:8`，方法名拼写以产品为准）**先调原实现一次**，仅在开关生效且原结果为 **3** 时改判为 **0** | 只动这一个返回值：`0/1/2` 与其它 unsigned 值**原样透传**（`1`=免流已生效、`2`=激活提示都保留）；不写 `had*` 等原生偏好、不碰网络/通知/window/高度。3 对应的是办卡推广分支，native 拿到 0 后**不展示**它。**注意原生 fallback**：`refreshWidget` 里这条被否决后会继续判断其它 widget（数据包/备份/试用等），**所以不是「底部从此全空」**，本轮也不改这些 fallback。截图文案到运行实例**没有真机证据**（静态对应，设备效果未验） |
-| 热启动空白开屏 | `-[BDNCUIAdvertisesManage needToShowSplashWithLaunchType:launchUrl:launchOptions:]`（`B40@0:8q16@24@32`，自有实例方法）先调原实现取原 bool，仅当 `launchType` 是 2 或 3 且原结果为真时改判为假 | 受 `BDNadBlockAdMethods` 控制（总开关开且非诊断）。**原策略、状态消费与埋点全部照跑**，只改返回值；`launchType` 0/1/负值/未知正值与冷启动一律不变；**不碰 window / timer / 系统前台恢复 / 时长 / 竞价**。详见下文 |
+| 冷启动＋热启动开屏闸门 | `-[BDNCUIAdvertisesManage needToShowSplashWithLaunchType:launchUrl:launchOptions:]`（`B40@0:8q16@24@32`，自有实例方法，argc 5）**先调原实现取原 bool**，仅当 `launchType` 是 **0（冷启动）或 2 / 3（热启动）** 且原结果为真时改判为假 | 受 `BDNadBlockAdMethods` 控制（总开关开且非诊断）。**原策略、状态消费与埋点全部照跑**，只改返回值；`launchType` 1 / 负值 / 未知正值仍精确透传；**不碰 window / timer / 系统前台恢复 / 时长 / 竞价**。详见下文 |
 
 各组件都复用 `FeatureRemoval.h` 的同一套安装原语（`BDFRSpec` / `BDFRResolve` /
 `BDFRCanAttach` / `BDFRAttach` / `BDFRInstallSpec` / `BDFRSuppressed`），不另抄一份。
-传输页这两个开关**不依赖** `BDNadBlockAdMethods`（那条只管旧 18 个广告 selector 与热启动开屏）：
+传输页这两个开关**不依赖** `BDNadBlockAdMethods`（那条只管旧 18 个广告 selector 与开屏闸门）：
 生效条件是总开关开、非诊断、且各自开关开，改完**下次冷启动**才生效；免流办卡那条同样受这三层开关控制、
 **不依赖** `BDNadBlockAdMethods`，也不热更新。
 本包已接线非企业 manager 的免流办卡 gate（`BDRemoveTransferCardPromo`）。同款 widget controller
@@ -146,26 +147,51 @@ bcebos 的 `cmpkg` 整目录（里面还有 `1_swan-core` 小程序运行时）�
 所以返回结构体/浮点/复数的方法在这一层一律跳过。**超时与回调行为真机未验证。**
 与网络层是两个独立开关，可单独关掉定位是哪一层。
 
-## 热启动空白开屏修复（受 `BDNadBlockAdMethods` 控制）
+## 冷启动＋热启动开屏闸门（受 `BDNadBlockAdMethods` 控制）
 
-症状：从后台放一段时间回到前台，广告素材已经没有了，但**空白开屏仍然出现几秒才消失**。
-本项让原生自己在「该不该展示」那一步判定为「不展示」，于是原生走它自带的收尾路径，不进入建窗。
+症状：热启动时**广告素材已经没有了，但空白开屏仍然出现几秒才消失**；冷启动时**全屏开屏**（含内容）
+仍会展示。本项让原生自己在「该不该展示」那一步判定为「不展示」，于是原生走它自带的收尾路径，不进入建窗。
 
 - 落点：`-[BDNCUIAdvertisesManage needToShowSplashWithLaunchType:launchUrl:launchOptions:]`
   （`B40@0:8q16@24@32`，自有实例方法，argc 5）。
 - 生效条件：总开关开 **且** 非诊断 **且** `BDNadBlockAdMethods` 开（沿用现有开关，未新增设置键）。
 - 顺序：**先调一次原实现**拿到原 bool，原方法对内部状态的消费、策略检查与埋点全部照跑；
-  只有当 `launchType` 是 **2 或 3**（热启动）且原结果为真时，才把返回值改成假并记一次 hit 日志。
-- 不改动：`launchType` 0（冷启动）/ 1 / 负值 / 未知正值，以及任一开关关闭、原结果本来就为假 —— 一律精确透传原 bool。
+  只有当 `launchType` 是 **0（冷启动）或 2 / 3（热启动）** 且原结果为真时，才把返回值改成假并记一次 hit 日志
+  （日志名沿用 `resume-splash-gate`，现在也覆盖冷启动）。
+- 不改动：`launchType` **1 / 负值 / 未知正值**，以及任一开关关闭、原结果本来就为假 —— 一律精确透传原 bool。
 - 不碰：窗口的创建或关闭、任何定时器与超时、时长统计、竞价任务、系统前台恢复链路，也不读也不写被 hook 类的私有状态。
-- 闸门位置在建窗之前：原生的 not-show 分支自己会 `setIsNotSplashWindow` / `setDecidedNotShow` 并返回 NO，
-  不进入 `dynamicAdvertiseTaskWithLaunchType:`，本组件不补任何收尾。
+- 闸门位置在建窗之前（冷、热两条都验过）：原生的 not-show 分支自己会
+  `setIsNotSplashWindow`（iPhone 分支）/ `setDecidedNotShow` 并返回 NO，不进入
+  `dynamicAdvertiseTaskWithLaunchType:` → `setupSplashAdvertiseWindowWithLaunchType:`；
+  冷启动的上游还会自己 `notifyIsShowSplashWindow:0` / `reportSplashShouldLoad:0` 并继续走完
+  `didFinishLaunching`，**本组件不补任何 callback、不伪造通知、不加延时**。
 
-**该提交（`e91f4e6`）的 9 组 Foundation 机制测试（含本项）、UIKit strict syntax 编译与
-arm64 / arm64e 双架构构建均已通过：
-<https://github.com/fucknima/BDNadBlock/actions/runs/38863989849>；
-真机上「空白开屏是否消失」仍未验证。**
-机制测试只覆盖开关组合、参数透传、原实现调用次数与安装失败路径，不代表设备上的空白开屏已不再出现。
+**历史基线（不要读成当时的实现已覆盖冷启动）**：本项最初只否决 `launchType` 2/3（热启动），
+首次落地在提交 `e91f4e6`，其 9 组 Foundation 机制测试（含本项）、UIKit strict syntax 编译与
+arm64 / arm64e 双架构构建通过：
+<https://github.com/fucknima/BDNadBlock/actions/runs/38863989849>。
+**那次通过的是「只覆盖热启动」的版本，冷启动覆盖是后来扩的**，不在那个 run 里。
+本轮扩到 0/2/3 的代码提交 `3989739` 已通过
+[CI 38916406687](https://github.com/fucknima/BDNadBlock/actions/runs/38916406687)：
+11 组机制测试（含开屏 96 组组合回归）、真实 UIKit 严格编译及 arm64 / arm64e 构建；验证分支未上传产物。
+真机上「空白开屏 / 全屏开屏是否消失」仍未验证。
+机制测试只覆盖开关组合、参数透传、原实现调用次数与安装失败路径，不代表设备上的开屏已不再出现。
+
+## 目标版本与升级边界
+
+- **静态适配目标是 13.35.5（build `13.35.5.6`）**；本轮仅扩展开屏闸门的冷启动覆盖，旧 13.32.2 的既有功能保留；
+  其它项目只复核签名元数据，没有为某个版本删功能。
+- 对新包跑仓库既有校验器：**18 个广告 selector + 31 个精准 hook + 14 个依赖全部 encoding 匹配、0 问题**。
+  这只说明**签名元数据兼容**，**不宣称**所有旧 feature 在 13.35.5 上的实际 UI 效果都已适配或安全 ——
+  页面结构、展示时机、布局都要真机看。
+- 新包 `MinimumOS 18.0` 是 App 自己的 `Info.plist` 要求，**不是**本插件的要求；插件自身部署目标保持
+  build 15 不变，本轮**不盲改 `Makefile`/签名**。
+- 新 IPA 自身**未见** `BDNadBlock` 成员或 `LC_LOAD` 项 —— 只说明**这个包本身没有注入本组件**，
+  **不能**据此推断用户手机上没装、也不能断言它没注入任何库。
+- 安装新 dylib 时**必须替换旧的、不要叠加**，并确认：总开关开、广告展示拦截开、诊断关，
+  然后**冷启动**一次让它生效。
+- **设备日志尚未收到**，以下仍需真机校验：全屏开屏是否消失；root / 首页 / 登录 / 分享 deeplink 是否正常进入；
+  热启动（warm）不回归。
 
 ## 怎么复核
 
@@ -195,7 +221,7 @@ App 升级后必须重跑 `verify_selectors.py`：selector 失效会直接报出
 
 **CI**：`gh workflow run Build --ref <branch>`（或 Actions 页手动 dispatch）。它跑上面那些
 host 测试、UIKit `-fsyntax-only` 编译、再用 Theos 出 dylib；只有 `main` 分支产出可下载 artifact。
-**已发布基线**是 `main` 的 `664a722`（CI run `38891349121`）：含 10 组 Foundation 机制测试、
+**办卡修复历史基线**是 `main` 的 `664a722`（CI run `38891349121`）：含 10 组 Foundation 机制测试、
 UIKit strict syntax 与 arm64 / arm64e 双架构构建；此前 `7e4d8e92`（run `38888673604`）
 只含一刻相册 + 下载小游戏两项，免流办卡补丁在 `1e869d5` 的
 [CI 38890609380](https://github.com/fucknima/BDNadBlock/actions/runs/38890609380) 中通过
@@ -204,6 +230,10 @@ UIKit strict syntax 与 arm64 / arm64e 双架构构建；此前 `7e4d8e92`（run
 [CI 38905984074](https://github.com/fucknima/BDNadBlock/actions/runs/38905984074)：11组host机制测试、
 真实UIKit严格编译及arm64 / arm64e双架构构建。验证分支没有可下载artifact，等 `main` 成功才发布；
 **该实验的真机效果仍未验证**。
+**最近一次历史基线**是 `main` 的 `b6a2c42`（CI run `38906342452`）：11 组 host 机制测试、
+真实 UIKit 严格编译与 arm64 / arm64e 双架构构建全部通过。
+**本轮「开屏闸门扩到 0/2/3」代码提交 `3989739` 的验证 CI `38916406687` 已通过**，仅 `main` 发布 CI 成功后提供下载；
+`BDExperimentHideHomeBanner` 仍默认关闭，既有净化项一个都没有删除。
 这些都只是**编译与机制**层面的证据：**真机效果未验，编译与机制测试都不等于真机生效。**
 
 ## 防崩
