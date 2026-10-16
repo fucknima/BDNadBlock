@@ -6,10 +6,11 @@
 // 并且让它们里面所有 static 函数都被真正引用到 —— 没人调就会报 unused-function，
 // 那正是接线缺失或漏改的信号。
 //
-// 覆盖的 header（都是产品代码本身，不复制、不改写）：
-//   SettingsMenu.h / FeatureRemoval.h / SearchDataRemoval.h / SearchViewRemoval.h / MenuEntry.h
+// 覆盖的 header：SettingsMenu.h / FeatureRemoval.h / TabRemoval.h / PersonalRemoval.h /
+// PersonalViewRemoval.h / RenewButtonRemoval.h / SearchDataRemoval.h / SearchViewRemoval.h /
+// MenuEntry.h —— 都是产品代码本身，不复制、不改写；增删组件时同步更新这行与下面的 include 顺序。
 //
-// 编译运行（CI 的 macOS runner，无需 IPA；工具链取当前选中的 Xcode）：
+// 编译运行（macOS + Xcode、iOS 15+ 目标即可，不需要 IPA；工具链取当前选中的 Xcode，CI 也用同一条）：
 //   sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
 //   xcrun --sdk iphoneos clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
 //     -target arm64-apple-ios15.0 -isysroot "$sdk" -I . -x objective-c++ -fsyntax-only tests/ui_compile.mm
@@ -64,7 +65,7 @@ static BOOL BDRemoveTaskCard(void)      { return BDNadPrefsActive(@"BDRemoveTask
 #pragma mark - 编译检查入口
 
 // 非 static 的全局函数（只为了被链接期引用，不运行、不注册）：把每个组件的对外入口
-// 各调一次，让五个 header 里全部 static 函数/安装器都被引用到。
+// 各调一次，让上面列出的每个 header 里全部 static 函数/安装器都被引用到。
 void BDNadUICompileCheck(UIViewController *host, NSURL *logURL) {
     BDFRInstallAll();                        // 首页推荐/游戏中心/金刚区求职小说
     BDPRInstallData();                       // 「我的」活动轮播 + 推广整排

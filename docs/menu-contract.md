@@ -1,24 +1,25 @@
-# 净化设置菜单接线契约（Preferences.h + SettingsMenu.h）
+# 净化设置菜单接线契约（Preferences.h + SettingsMenu.h + MenuEntry.h）
 
-给 hook 接线用的最小说明。**菜单只读写 NSUserDefaults，冷启动生效**：
+本组件的最小说明。**菜单只读写 NSUserDefaults，冷启动生效**：
 只写本组件固定键（不修改账号、缓存或原生偏好），不热改 UIKit 列表/导航、
-不自动杀 App、不清百度网盘任何数据。
+不自动杀 App、不清百度网盘任何数据。功能全貌见 [README.md](../README.md)。
 
 ## 1. 文件与 include 关系
 
 | 文件 | 作用 | 谁 include |
 |---|---|---|
 | `Preferences.h` | 唯一规格表 + 读写原语（Foundation only） | `SettingsMenu.h`、`tests/preferences_test.mm` |
-| `SettingsMenu.h` | 菜单 VC + 入口函数（UIKit） | 只给 `Tweak.xm` 一个 TU |
-| `tests/preferences_test.mm` | macOS host 检查（无 UIKit） | CI（尚未接线，见第 6 节） |
+| `SettingsMenu.h` | 菜单 VC + 入口函数 `BDPresentPurificationSettings`（UIKit） | 只给 `Tweak.xm` 一个 TU |
+| `MenuEntry.h` | 设置页导航条上的「网盘净化」按钮（UIKit） | `Tweak.xm`（在 `FeatureRemoval.h` 之后） |
+| `tests/preferences_test.mm` | macOS host 检查（无 UIKit） | CI（已接线，见第 6 节） |
 | `docs/menu-contract.md` | 本文件 | 人 |
 
-- 两个 header 都是单 TU header（内部 `static`），`Tweak.xm` 里 include 一次即可。
-- 建议放在 `Tweak.xm` 顶部现有 `#include "FeatureRemoval.h"` 附近：
-  ```objc
-  #include "SettingsMenu.h"      // 内部已 #import "Preferences.h"
-  ```
-- 不要新增 `FILES`/`Frameworks`：`UIKit` 已在 `Makefile`，两个 header 不算编译单元。
+- 这些 header 都是单 TU header（内部 `static`），`Tweak.xm` 里各 include 一次即可。
+- 当前 `Tweak.xm` 的实际 include 顺序（依赖单向，别调换）：
+  `Preferences.h` → `FeatureRemoval.h` → `TabRemoval.h` → `PersonalRemoval.h` →
+  `PersonalViewRemoval.h` → `RenewButtonRemoval.h` → **`SettingsMenu.h`** →
+  `SearchDataRemoval.h` → `SearchViewRemoval.h` → **`MenuEntry.h`** → `NetworkRules.h`。
+- 不要新增 `FILES`/`Frameworks`：`UIKit` 已在 `Makefile`，这些 header 不算编译单元。
 
 ## 2. 唯一选项清单（默认值只在 `Preferences.h` 规格表里写一份）
 
@@ -42,7 +43,13 @@
 
 开关 **ON = 去除/拦截**。`BDNadBlockEnabled` / `BDNadBlockNetwork` /
 `BDRemoveRecommend` / `BDRemoveGameCenter` / `BDNadBlockDumpOnly` 是旧版已有键，
-默认值与 `Tweak.xm` 里 `BDDefault` 的 fallback 一致，老用户值继续被尊重。
+默认值与老版本 fallback 一致，老用户值继续被尊重。
+
+`BDRemoveHomePromo`（首页年卡促销）**功能本版未实施**：静态定位未收束，用户选择先做其它项。
+菜单里那一行只呈现副标题「待定位，本版本暂时保留」，没有 `UISwitch`、不读也不写该键的
+saved 值 —— 免得显示成「默认 YES 已生效」。规格表里的 15 个键与默认值原样保留，
+其中这一个的默认 YES **只是保留配置**；启动日志里 `active BDRemoveHomePromo = 1`
+也只是快照值，**不是该功能已接线的证据**。等定位收束后再接上真实开关。
 
 ## 3. 函数名（主会话按这些接线）
 
@@ -64,10 +71,13 @@ BOOL BDNadPrefsHasPendingChanges(void);                           // 有改动�
   （`BDNadBlockEnabled && !BDNadBlockDumpOnly` 是所有去除/拦截开关的前置条件）。
 - 未知 key：`BDNadPrefsActive` / `BDNadPrefsDesired` 返回 **NO**（fail-closed），
   `BDNadPrefsSetDesired` 返回 **NO** 且不落值；无反射调用。
-- 建议把 `BDNadPrefsInit()` 放在构造器早期（`BDFRInstallAll()` 之前），
+- **建议把 `BDNadPrefsInit()` 放在构造器早期（`BDFRInstallAll()` 之前）**，
   这样 hook 读到的就是启动那一刻用户保存的值。
-- 旧的 `BDEnabled/BDDumpOnly/BDRemoveRecommend/BDRemoveGameCenter` 可以改成
-  `BDNadPrefsActive(...)` 的薄封装；本组件没改 `Tweak.xm`，由接线方决定。
+  现状：`Tweak.xm` 的 `__attribute__((constructor))` 第一件事就是 `BDNadPrefsInit()`，
+  随后才依次装各组件的 hook 与网络层。
+- 旧的 `BDEnabled / BDDumpOnly / BDRemoveRecommend / BDRemoveGameCenter` 等已改成
+  `BDNadPrefsActive(...)` 的薄封装（仍定义在 `Tweak.xm`），各组件 header 只调这些同名
+  静态函数，不再自己读 defaults、不另建默认值表。
 
 ## 4. 菜单入口
 
@@ -84,16 +94,22 @@ static inline void BDPresentPurificationSettings(UIViewController *host, NSURL *
 - 只在主线程、由 UIKit 按钮触发时调用（内部 `[NSThread isMainThread]` 保护）。
 - `logURL` 传现有日志文件 `Documents/BDNadBlock-dump.txt` 的 URL；
   文件不存在/不可读 -> `UIAlertController` 明确提示；可读 -> `UIActivityViewController`
-  （iPad 已设 `sourceView`/`sourceRect`）。分享**不上传、不复制整份文件、不删除原日志**。
+  （iPad 已设 `sourceView`/`sourceRect`）。本组件**不自动上传**，目的地由用户在系统分享面板里选；
+  **不复制整份日志、不删除源文件**。
 - 菜单自身文案已含：“保存后请彻底退出后台并重开百度网盘生效，不会自动退出；当前页面不热更新。”
   有待生效改动时 footer 前会加“有改动待生效。”。
 
-示例（由接线方选一个真实入口，例如“我的-设置”某个按钮）：
+菜单自身的按钮在 `MenuEntry.h`：给两个候选设置页（`SettingConfigViewController` /
+`SettingViewController`，各一条 `-viewDidLoad` post-hook）**追加**「网盘净化」到
+`navigationItem.rightBarButtonItems` 末尾，两类各自独立校验。点击时：
 
 ```objc
 NSURL *log = [NSURL fileURLWithPath:BDResolveLogPath()];   // Tweak.xm 里已有该函数
-BDPresentPurificationSettings(self, log);
+BDPresentPurificationSettings(self.host, log);              // host 是 weak，不给宿主加 selector
 ```
+
+**真机上哪一页会出现这个按钮未验证。** `menu-open-request` 日志只表示“请求过打开”，
+present 之前还有主线程/modal 守卫，守卫拒绝时菜单不会出现。
 
 ## 5. 不做的事（设计要求，别在接线时加回来）
 
@@ -101,19 +117,28 @@ BDPresentPurificationSettings(self, log);
   唯一写入面就是 App 的 `NSUserDefaults` 里本组件那 15 个固定键。
 - 不 `synchronize`、不直接改 plist 文件、不新增配置服务类/依赖。
 - 不热更新（改完不 reload 网盘的列表/导航）、不自动杀 App、不加延时/锁/重试。
-- 不新增日志系统、不复制整份日志、不上传、不收集账号信息。
+- 不新增日志系统、不复制整份日志、不自动上传（分享目的地由用户自己选）、不收集账号信息。
+- 不为了隐藏某一项而删掉正常功能入口（容量卡 / 最近 / 相册 / 备份 / 金刚区其它条目 /
+  整卡既有会员点击等一律保留）。
 
 ## 6. 验证状态
 
-- 本组件只新增 4 个文件，未改 `Tweak.xm` / `Makefile` / CI，`FeatureRemoval` 3 个 hook 与其测试未动。
-- CI 需要新增一步（接线方加，本次不加）：
+- **已接线**：菜单组件与 `Tweak.xm` / `MenuEntry.h` / CI 都已接上（`BDNadPrefsInit()` 在构造器
+  最前，随后装各组件 hook，`BDMEInstallAll()` 装入口按钮）。CI 里已包含本组件那一步：
   ```
   clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
     -framework Foundation -o "$RUNNER_TEMP/preferences_test" tests/preferences_test.mm
   "$RUNNER_TEMP/preferences_test"
   ```
-- 真机 UI（菜单显示、开关、分享面板、冷启动后是否真的生效）**尚未验证**，
-  需要装包后人工确认；host 测试只覆盖 `Preferences.h` 的读写/快照/规格表语义。
-- host 测试里“新 defaults 实例读到已保存值”只是**同进程 suite 可见性**，
-  不等同于已验证真实进程重启 / 落盘恢复；`BDNadPrefsGlobalSnapshot` 的
-  “建一次就不再变”也只能在真机（或模拟器）上确认。
+  以及 `tests/ui_compile.mm` 的 iOS SDK `-fsyntax-only` 编译（覆盖 UIKit 声明）。
+  跑法与最新结果见 README「怎么复核」。
+- **CI 通过 ≠ 真机生效**：已核验基线是提交 `2b6e48e` 的 CI run `38843317180`
+  （<https://github.com/fucknima/BDNadBlock/actions/runs/38843317180>）：
+  8 组 Foundation 机制测试 + UIKit strict syntax + arm64/arm64e 双架构构建全部通过，
+  **含底部 tab 根上下文（`customTabBar`）的新修复**；该验证分支**没有可下载 artifact**，
+  等 `main` 成功才发布。这些都只是**编译与机制**层面的证据。
+- **真机 UI 仍未验证**：菜单是否出现在真实设置页、开关是否可切、分享面板、
+  冷启动后是否真的生效，都要装包后人工确认。
+- **持久化未跨进程验证**：host 测试里“新 defaults 实例读到已保存值”只是**同进程 suite
+  可见性**，不等于已验证真实进程重启后的落盘恢复；`BDNadPrefsGlobalSnapshot`
+  的“建一次就不再变”也只能在真机（或模拟器）上确认。

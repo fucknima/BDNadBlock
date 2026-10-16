@@ -34,17 +34,21 @@
 //   startAdvertiseFetchTimer）。显示层 no-op 的回调与超时行为仍需真机验证。
 //   元数据确认返回 v(void) 或 B(BOOL)，这不证明业务状态与布局安全。
 //
-// 精准 feature hook（3 个，实现见 FeatureRemoval.h，构造器里同步安装）：
+// 精准 feature hook（FeatureRemoval.h 是 4 个核心 hook，构造器里同步安装；
+// 另有 TabRemoval / PersonalRemoval / PersonalViewRemoval / RenewButtonRemoval /
+// SearchData / SearchView / MenuEntry 各自带自己的开关与安装入口，别数总数）：
 //   首页「推荐/创意」整块 = +[BHSettings isMSHSwitchTypeHomeRecommend] 与
 //   -[BDPanNewMSHContentViewController tableView:numberOfRowsInSection:] 一对；
-//   我的页游戏中心 = +[BDPanPersonalConfig gameCenterSwitch]。
+//   我的页游戏中心 = +[BDPanPersonalConfig gameCenterSwitch]；
+//   首页金刚区求职/小说 = +[BDPanFeedHomeConfig cacheKingKongsConfigArray] 过滤最终数组。
 //   先存原 IMP 再换，调用时按开关透传；签名不符/方法不在本类自己的表里就 skip。
 //
 // 防崩：
 //   - 不交换 IMP，用 method_setImplementation + 保存原 IMP 直调（交换写反 = 无限递归，
 //     上一版就是栽在这里：depth 12353 打穿 Stack Guard）
-//   - 返回结构体/浮点的方法一律不碰（no-op 只保证 x0 有效，s0/x1 是垃圾）
-//   - 跳过 init/dealloc/copy/load/setter 等生命周期方法
+//   - 返回类型闸门与生命周期方法闸门**只针对旧广告的通用 no-op 安装器**：
+//     那种 no-op 只保证 x0 有效，返回结构体/浮点/复数的方法一律不碰，也跳过
+//     init/dealloc/copy/load/setter。各精准组件用已核验的 typed 替换实现，不受这两条限制。
 //   - 网络 hook 目前延迟 1.5 秒；定时器不代表 app ready，已有 session 也不会被改写
 //
 // 日志：syslog + 沙盒 Documents/BDNadBlock-dump.txt（可取出）
@@ -451,7 +455,7 @@ static void BDNadBlockInit(void) {
     BDPRInstallData();   // 「我的」活动轮播 + 推广整排（bannerSwitch -> NO，钱包行高折叠）
     BDPVInstallAll();    // 「我的」任务卡：两条 -layoutViews post-hook（先布局后隐藏，installer 不做 UI 操作）
     BDRBInstallAll();    // 「去续费」按钮：三条 -vipButton 各自独立安装（默认保留该按钮）
-    BDTRInstallAll();     // 底部「库库AI」tab：过滤可见数组 + 四个索引 getter 换算（整组校验）
+    BDTRInstallAll();     // 底部「库库AI」tab：过滤可见数组，并按构造期/当前根上下文换算四个索引（整组校验）
     BDSRInstallData();   // -[BDPanSearchManager setStaticWordList:] 清搜索框轮播词
     BDSRInstallView();    // BDPanNewMSHSearchView 三条 post-hook（整组校验，不过就三条都不装）
     BDMEInstallAll();     // 设置页导航条「网盘净化」按钮：入口照装，不受总开关/诊断影响
