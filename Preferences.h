@@ -45,12 +45,11 @@ static const BDNadPrefsSpec BDNadPrefsSpecs[] = {
     {"BDNadBlockEnabled",          "启用网盘净化",           YES, BDNadPrefsGroupMaster},
     // 首页
     {"BDRemoveRecommend",          "隐藏推荐/创意区域",      YES, BDNadPrefsGroupHome},
-    {"BDRemoveHomePromo",          "隐藏首页年卡促销",       YES, BDNadPrefsGroupHome},
     {"BDRemoveAITab",              "隐藏底部库库AI",         YES, BDNadPrefsGroupHome},
     {"BDRemoveJobNovel",           "隐藏求职/小说入口",      YES, BDNadPrefsGroupHome},
     {"BDRemoveSearchPromo",        "隐藏搜索推广词",         YES, BDNadPrefsGroupHome},
     {"BDRemoveSearchAI",           "隐藏搜索框AI按钮",       YES, BDNadPrefsGroupHome},
-    // 实验项：默认关闭，独立 key，不动 HomePromo 那行说明（年卡仍未定位）
+    // 实验项：默认关闭，独立 key
     {"BDExperimentHideHomeBanner", "隐藏顶部横幅容器·实验",   NO,  BDNadPrefsGroupHome},
     // 我的
     {"BDRemoveGameCenter",         "隐藏游戏中心",           YES, BDNadPrefsGroupPersonal},

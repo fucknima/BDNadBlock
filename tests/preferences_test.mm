@@ -9,7 +9,8 @@
 // 同一 suite 的新 defaults 实例（**同进程可见性**，不等于已验证真实进程重启/落盘恢复）
 // 能读到、已建快照不随写入改变、下一次快照读到新值、总开关/诊断/独立选项可读、
 // 传输页三个新键的默认值/独立保存/快照语义（含办卡键不再是无规格表的未接线键）；
-// 首页横幅容器实验键默认 NO、保存后旧快照不变/新快照可见、与旧键互不影响。
+// 首页横幅容器实验键默认 NO、保存后旧快照不变/新快照可见、与旧键互不影响；
+// 退役键（BDRemoveHomePromo）不在表里：读 fail-closed、写被拒、不进快照，旧值也不被本组件清理。
 //
 // 构建运行（macOS，无需 IPA，无需 Theos）：
 //   clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
@@ -34,7 +35,7 @@ static int gFailures = 0;
 // 测试用期望键（固定清单，防止规格表被悄悄改键）。
 static NSString *const kExpectedKeys[] = {
     @"BDNadBlockEnabled",
-    @"BDRemoveRecommend", @"BDRemoveHomePromo", @"BDRemoveAITab",
+    @"BDRemoveRecommend", @"BDRemoveAITab",
     @"BDRemoveJobNovel", @"BDRemoveSearchPromo", @"BDRemoveSearchAI",
     @"BDExperimentHideHomeBanner",
     @"BDRemoveGameCenter", @"BDRemovePersonalPromotions",
@@ -69,7 +70,7 @@ static void TestDefaults(void) {
     CHECK(BDNadPrefsSpecForKey(@"BDNadBlockEnabled")->defaultValue == YES);
     CHECK(BDNadPrefsSpecForKey(@"BDRemoveRenewButton")->defaultValue == NO);    // 续费按钮默认保留
     CHECK(BDNadPrefsSpecForKey(@"BDNadBlockDumpOnly")->defaultValue == NO);     // 默认不做仅诊断
-    // 首页顶部横幅容器实验：默认关闭、首页分组，**不是**年卡成品。
+    // 用户反馈顶部实验已去掉年卡；仍保持默认关闭、首页分组和原存储键。
     CHECK(BDNadPrefsSpecForKey(@"BDExperimentHideHomeBanner")->defaultValue == NO);
     CHECK(BDNadPrefsSpecForKey(@"BDExperimentHideHomeBanner")->group == BDNadPrefsGroupHome);
     CHECK(BDNadPrefsSpecForKey(@"BDNadBlockAdMethods")->defaultValue == YES);
@@ -110,10 +111,10 @@ int main(void) {
         // 旧版用户值（NSString）必须被尊重。
         [d setObject:@"0" forKey:@"BDRemoveGameCenter"];
         [d setObject:@"1" forKey:@"BDNadBlockNetwork"];
-        [d setObject:@"true" forKey:@"BDRemoveHomePromo"];
+        [d setObject:@"true" forKey:@"BDRemoveJobNovel"];
         CHECK(BDNadPrefsDesired(d, @"BDRemoveGameCenter") == NO);
         CHECK(BDNadPrefsDesired(d, @"BDNadBlockNetwork") == YES);
-        CHECK(BDNadPrefsDesired(d, @"BDRemoveHomePromo") == YES);
+        CHECK(BDNadPrefsDesired(d, @"BDRemoveJobNovel") == YES);
 
         // 类型不合适：退规格默认，不崩（默认都是 YES，续费确实是 NO）。
         // 数组/字典/Data 是合法 plist 值但非标量；NSDate 也是合法 plist 值但不是 bool。
@@ -137,6 +138,21 @@ int main(void) {
         // 不属于我们的键不允许写（不是“known key”）。
         CHECK(BDNadPrefsSetDesired(d, @"BDPanSomeAppKey", YES) == NO);
         CHECK([d objectForKey:@"BDPanSomeAppKey"] == nil);
+
+        // 退役键 BDRemoveHomePromo（已被「顶部横幅容器·实验」取代）：本组件不认它、也不替用户清理它。
+        [d setObject:@YES forKey:@"BDRemoveHomePromo"];            // 模拟旧版本留下的 saved YES
+        CHECK(BDNadPrefsSpecForKey(@"BDRemoveHomePromo") == NULL);
+        CHECK(BDNadPrefsDesired(d, @"BDRemoveHomePromo") == NO);   // 未知 key：读 fail-closed
+        CHECK(BDNadPrefsActive(@"BDRemoveHomePromo") == NO);       // 不进启动快照
+        CHECK(BDNadPrefsSnapshot(d)[@"BDRemoveHomePromo"] == nil);
+        CHECK(BDNadPrefsSetDesired(d, @"BDRemoveHomePromo", NO) == NO);   // 写被拒绝
+        CHECK([d objectForKey:@"BDRemoveHomePromo"] != nil);       // 旧值原样留着，没被删
+        CHECK([d boolForKey:@"BDRemoveHomePromo"] == YES);
+        // 其余键不受影响：实验横幅键仍是默认 NO、续费仍是默认 NO、总开关仍是默认 YES。
+        CHECK(BDNadPrefsSpecForKey(@"BDExperimentHideHomeBanner")->defaultValue == NO);
+        CHECK(BDNadPrefsDesired(d, @"BDExperimentHideHomeBanner") == NO);
+        CHECK(BDNadPrefsDesired(d, @"BDRemoveRenewButton") == NO);
+        CHECK(BDNadPrefsDesired(d, @"BDNadBlockEnabled") == YES);
 
         // 写入 owned key 才成功。
         CHECK(BDNadPrefsSetDesired(d, @"BDRemoveRenewButton", YES) == YES);
