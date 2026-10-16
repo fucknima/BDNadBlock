@@ -68,14 +68,26 @@ FEATURE_HOOKS = [
     # 设置页入口按钮：两个候选类各自一条 -viewDidLoad，互不依赖。
     ("SettingConfigViewController", "-", "viewDidLoad", "v16@0:8"),
     ("SettingViewController", "-", "viewDidLoad", "v16@0:8"),
-    # 底部「库库AI」tab：可见数组唯一写入口 + 四个索引 getter（类方法走 metaclass）。
+    # 底部「库库AI」tab：可见数组写入口 + 构造期上下文 + 四个索引 getter（类方法走 metaclass）。
     ("BDPanTabBarController", "-", "setTabBarItemModels:", "v24@0:8@16"),
+    ("BDPanTabBarController", "-", "customTabBar", "v16@0:8"),
     ("BDTabViewController", "+", "friendsIndex", "q16@0:8"),
     ("BDTabViewController", "+", "magicTrickIndex", "q16@0:8"),
     ("BDTabViewController", "+", "findSourceIndex", "q16@0:8"),
     ("BDTabViewController", "+", "settingIndex", "q16@0:8"),
     # 「我的」活动轮播：类方法（metaclass）、B16@0:8、argc 2。
     ("BDPanPersonalConfig", "+", "bannerSwitch", "B16@0:8"),
+    # 「我的」续费卡去按钮：三个 header view 各自一条 -vipButton（@16@0:8）。
+    ("BDPanPersonNewVipCardHeaderView", "-", "vipButton", "@16@0:8"),
+    ("BDPanPersonVipHeaderView", "-", "vipButton", "@16@0:8"),
+    ("BDPanPersonAdvanceVIPHeaderView", "-", "vipButton", "@16@0:8"),
+    # 「我的」推广入口整排收起：两个 section 各自的 -heightForView。
+    # **double 返回（d）**，写成 @ / q 都会被判成签名不符而整条放弃。
+    ("BDPanPersonalWalletSection", "-", "heightForView", "d16@0:8"),
+    ("BDPanPersonalCenterWalletSection", "-", "heightForView", "d16@0:8"),
+    # 「我的」积分卡：两个 section 各自的 -layoutViews（post-hook 里再摘 pointsCard）。
+    ("BDPanPersonalSpaceAndPointSection", "-", "layoutViews", "v16@0:8"),
+    ("BDPanPersonalSpaceSection", "-", "layoutViews", "v16@0:8"),
 ]
 
 # **依赖** accessor：hook 自己不发消息，是安装前只读校验的对象（校验不过就整条跳过）。
@@ -95,9 +107,15 @@ FEATURE_DEPS = [
     # 写成 @ 返回会误判成「宿主签名不符」而整组放弃。
     ("BDPanVerticalScrollLableViewConfig", "-", "setTexts:", "v24@0:8@16"),
     ("BDPanVerticalScrollLableView", "-", "configWithLabelConfig:", "v24@0:8@16"),
-    # 底部 tab 过滤的判据依赖：itemType 是**无符号** Q16@0:8（写成 q 会被判成不一致）。
-    ("BDTabItemModel", "-", "itemType", "Q16@0:8"),
+    # 底部 tab 过滤的判据依赖：只读 itemTabName。itemType 已从判据里去掉
+    # （它不是 AI 专属：未登录 tab bar 就把 1 赋给了 shared_page），所以不再作为依赖校验。
     ("BDTabItemModel", "-", "itemTabName", "@16@0:8"),
+    # 稳态取图用的 active root 读取器：类方法在 metaclass 上，@16@0:8、argc 2。
+    # 不校验就等于对第三方类裸 objc_msgSend，宿主升级改名会直接崩。
+    ("AppDelegate", "+", "ad_curTabBarController", "@16@0:8"),
+    # 积分卡 post-hook 的 getter 依赖：两个 section 各自的 -pointsCard（@16@0:8）。
+    ("BDPanPersonalSpaceAndPointSection", "-", "pointsCard", "@16@0:8"),
+    ("BDPanPersonalSpaceSection", "-", "pointsCard", "@16@0:8"),
 ]
 
 # no-op 只保证 x0 有效。返回结构体/浮点/复数的方法调用方会读 s0/x1/v0 —— 垃圾。
