@@ -35,15 +35,18 @@ static BOOL BDRemoveGameCenter(void)  { return BDNadPrefsActive(@"BDRemoveGameCe
 static BOOL BDRemoveJobNovel(void)    { return BDNadPrefsActive(@"BDRemoveJobNovel"); }
 static BOOL BDRemoveSearchPromo(void) { return BDNadPrefsActive(@"BDRemoveSearchPromo"); }
 static BOOL BDRemoveSearchAI(void)    { return BDNadPrefsActive(@"BDRemoveSearchAI"); }
+static BOOL BDRemoveAITab(void)       { return BDNadPrefsActive(@"BDRemoveAITab"); }
 
 #pragma mark - 产品 header（顺序就是它们之间的单向依赖，别调换）
 
 // SettingsMenu.h   提供 BDPresentPurificationSettings（MenuEntry 的依赖）
-// FeatureRemoval.h 提供 BDFRSpec / BDFRResolve / BDFRInstallSpec（下面三个组件的安装器）
+// FeatureRemoval.h 提供 BDFRSpec / BDFRResolve / BDFRInstallSpec（下面几个组件的安装器）
+// TabRemoval.h     底部 AI tab 过滤（复用安装器）
 // SearchDataRemoval.h / SearchViewRemoval.h 搜索框数据层与 UI 层（必须在 FeatureRemoval.h 之后）
 // MenuEntry.h      设置页入口按钮（需要菜单入口 + 安装器）
 #include "SettingsMenu.h"
 #include "FeatureRemoval.h"
+#include "TabRemoval.h"
 #include "SearchDataRemoval.h"
 #include "SearchViewRemoval.h"
 #include "MenuEntry.h"
@@ -54,6 +57,7 @@ static BOOL BDRemoveSearchAI(void)    { return BDNadPrefsActive(@"BDRemoveSearch
 // 各调一次，让五个 header 里全部 static 函数/安装器都被引用到。
 void BDNadUICompileCheck(UIViewController *host, NSURL *logURL) {
     BDFRInstallAll();                        // 首页推荐/游戏中心/金刚区求职小说
+    BDTRInstallAll();                        // 底部「库库AI」tab 过滤 + 索引换算
     BDSRInstallData();                       // 搜索框轮播词数据层
     BDSRInstallView();                       // 搜索框 UI 层三条 post-hook（整组校验）
     BDMEInstallAll();                        // 设置页导航条「网盘净化」入口

@@ -120,6 +120,7 @@ static BOOL BDRemoveGameCenter(void)  { return BDNadPrefsActive(@"BDRemoveGameCe
 static BOOL BDRemoveJobNovel(void)    { return BDNadPrefsActive(@"BDRemoveJobNovel"); }
 static BOOL BDRemoveSearchPromo(void) { return BDNadPrefsActive(@"BDRemoveSearchPromo"); }
 static BOOL BDRemoveSearchAI(void)    { return BDNadPrefsActive(@"BDRemoveSearchAI"); }
+static BOOL BDRemoveAITab(void)       { return BDNadPrefsActive(@"BDRemoveAITab"); }
 
 // 网络拦截总门：总开关 + 诊断 + 网络开关的组合，任一不满足就整层不拦。
 // matcher 最前查一次即可，不需要在里面重复判断总开关。
@@ -129,11 +130,13 @@ static BOOL BDBlockNetwork(void) {
 
 // 组件 include 顺序（依赖是单向的，别调换）：
 //   FeatureRemoval.h  提供 BDFRSpec / BDFRResolve / BDFRInstallSpec / BDFRSuppressed
+//   TabRemoval.h      底部 AI tab 过滤 + 索引映射（复用 FeatureRemoval 的安装器）
 //   SettingsMenu.h    提供 BDPresentPurificationSettings（MenuEntry 的依赖）
 //   SearchDataRemoval.h / SearchViewRemoval.h  搜索框数据层与 UI 层清理
 //   MenuEntry.h       设置页入口按钮，依赖上面的菜单入口 + FeatureRemoval 的安装器
 // 全部只读同一份 active 快照，不各写各的默认值。
 #include "FeatureRemoval.h"
+#include "TabRemoval.h"
 #include "SettingsMenu.h"
 #include "SearchDataRemoval.h"
 #include "SearchViewRemoval.h"
@@ -435,6 +438,7 @@ static void BDNadBlockInit(void) {
     // 精准 feature hook 与搜索/入口 hook 都在这里同步装完（不走下面的 1.5s / 3s 定时器）。
     // 只有冷启动、且这里发生在页面组装之前才生效；真机以 [BDNadFeature] installed 日志为准。
     BDFRInstallAll();
+    BDTRInstallAll();     // 底部「库库AI」tab：过滤可见数组 + 四个索引 getter 换算（整组校验）
     BDSRInstallData();   // -[BDPanSearchManager setStaticWordList:] 清搜索框轮播词
     BDSRInstallView();    // BDPanNewMSHSearchView 三条 post-hook（整组校验，不过就三条都不装）
     BDMEInstallAll();     // 设置页导航条「网盘净化」按钮：入口照装，不受总开关/诊断影响

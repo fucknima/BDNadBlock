@@ -174,16 +174,16 @@ static void test_real_spec(void) {
 
     // 3b) 非空 NSMutableArray 也是 NSArray 且非空 -> 同样清成空数组，
     //     并且调用方那个可变数组自身必须毫发无损（不原地改调用方对象）。
-    NSMutableArray *mutable = [NSMutableArray arrayWithObjects:@"x", nil];
+    NSMutableArray *mutableWords = [NSMutableArray arrayWithObjects:@"x", nil];
     calls = gOrigCalls;
-    BDSRSendSetWords(obj, sel, mutable);
+    BDSRSendSetWords(obj, sel, mutableWords);
     CHECK(gOrigCalls == calls + 1);
     CHECK(gSeenWords != nil);
     CHECK([gSeenWords isKindOfClass:[NSArray class]]);
     CHECK(((NSArray *)gSeenWords).count == 0);
-    CHECK(gSeenWords != mutable);
-    CHECK([mutable count] == 1);                       // 原始对象没被改
-    CHECK([[mutable objectAtIndex:0] isEqualToString:@"x"]);
+    CHECK(gSeenWords != mutableWords);
+    CHECK([mutableWords count] == 1);                    // 原始对象没被改
+    CHECK([[mutableWords objectAtIndex:0] isEqualToString:@"x"]);
 
     // 4) 关掉 SearchPromo -> 原对象原样透传。
     gRemoveSearchPromo = NO;
