@@ -287,17 +287,27 @@ static void test_skip_paths(void) {
     CHECK(s2.installed == NO);
     CHECK(origArgc == NULL);
 
-    // 3) 只有继承实现（方法在父类上）-> 不装，父类槽被动过也不行
+    // 3) 只有继承实现（方法在父类上）-> 不装；父类的 Method 槽与子类解析结果都必须还是原父类实现
     Class base = BDTPMakeClass("BDTPPhantomBase", Nil);
     CHECK(class_addMethod(base, gYikeSel, (IMP)PhYikeTrans, "B16@0:8"));
     Class sub = BDTPMakeClass("BDTPPhantomSub", base);
+    CHECK(sub != Nil);
     IMP origSub = NULL;
     BDFRSpec s3 = BDTPTestSpec("BDTPPhantomSub", "canShowYikeBanner", "B16@0:8", 2,
                                (IMP)BDTPYikeTrans, &origSub, "t-inherited-only");
     CHECK(BDFRInstallSpec(&s3) == NO);
     CHECK(s3.installed == NO);
-    CHECK(origSub == NULL);
+    CHECK(origSub == NULL);                                 // 没把任何 IMP 存成「原实现」
+    // 拒装之后：父类槽没被换，子类解析到的仍是父类那个原实现（不是本组件的替换实现）
     CHECK(class_getMethodImplementation(base, gYikeSel) == (IMP)PhYikeTrans);
+    CHECK(class_getMethodImplementation(sub, gYikeSel) == (IMP)PhYikeTrans);
+    CHECK(class_getMethodImplementation(sub, gYikeSel) != (IMP)BDTPYikeTrans);
+    CHECK(class_getInstanceMethod(sub, gYikeSel) == class_getInstanceMethod(base, gYikeSel));
+    // 运行时也确认走的是父类原实现：返回值照旧，调用次数只 +1
+    gYikeTransOrig = YES;
+    unsigned subCallsBefore = gYikeTransCalls;
+    CHECK(BDTPSendBool([[sub alloc] init], gYikeSel) == true);
+    CHECK(gYikeTransCalls == subCallsBefore + 1);
 
     // 4) 类缺失 -> 不装
     IMP origMissing = NULL;
