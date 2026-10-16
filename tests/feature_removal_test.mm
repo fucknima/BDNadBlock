@@ -13,7 +13,9 @@
 
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 #include <stdio.h>
+#include <string.h>
 
 #pragma mark - 假开关 / 假日志（FeatureRemoval.h 依赖这些同名静态函数）
 
@@ -21,6 +23,7 @@ static BOOL gEnabled = YES;
 static BOOL gDumpOnly = NO;
 static BOOL gRemoveRecommend = YES;
 static BOOL gRemoveGameCenter = YES;
+static BOOL gRemoveJobNovel = YES;
 static unsigned gLogLines = 0;
 
 static void BDLog(NSString *fmt, ...) {
@@ -31,6 +34,7 @@ static BOOL BDEnabled(void) { return gEnabled; }
 static BOOL BDDumpOnly(void) { return gDumpOnly; }
 static BOOL BDRemoveRecommend(void) { return gRemoveRecommend; }
 static BOOL BDRemoveGameCenter(void) { return gRemoveGameCenter; }
+static BOOL BDRemoveJobNovel(void) { return gRemoveJobNovel; }
 
 #include "../FeatureRemoval.h"
 
@@ -123,6 +127,44 @@ static bool PhGameCenter(id self, SEL _cmd) {
     (void)self; (void)_cmd;
     return gGameCenter;
 }
+
+#pragma mark - 金刚区替身（真名 fake 类，getter + q 编码 accessor）
+
+// 原 getter 的返回值与调用次数：用来证明「只调一次原实现」。
+static NSArray *gKongSource;
+static unsigned gKongOrigCalls;
+
+static id PhKongCache(id self, SEL _cmd) {
+    (void)self; (void)_cmd;
+    gKongOrigCalls++;
+    return gKongSource;      // 原样返回同一个对象（不 copy），便于核对 identity
+}
+
+// -[BDPanFHKingKongsModel kingKongId] 的替身：用关联对象存 id，避免子类化或改 ivar 布局。
+// 用 class_addMethod 指定 q16@0:8，和真方法一样走 runtime 校验。
+static NSInteger PhKongID(id self, SEL _cmd) {
+    (void)_cmd;
+    NSNumber *n = objc_getAssociatedObject(self, (const void *)&gKongSource);
+    return n ? n.longLongValue : -1;
+}
+
+static id BDFRMakeKongModel(NSInteger kingKongId) {
+    id m = [[NSClassFromString(@"BDPanFHKingKongsModel") alloc] init];
+    objc_setAssociatedObject(m, (const void *)&gKongSource, @(kingKongId), OBJC_ASSOCIATION_RETAIN);
+    return m;
+}
+
+// 装 fake 金刚区：model 类（q16@0:8 accessor）+ config 类（@16@0:8 类方法）。
+static void BDFRSetupKongClasses(void) {
+    Class model = BDFRMakeClass("BDPanFHKingKongsModel", Nil);
+    CHECK(class_addMethod(model, sel_registerName("kingKongId"),
+                          (IMP)PhKongID, "q16@0:8"));
+    Class cfg = BDFRMakeClass("BDPanFeedHomeConfig", Nil);
+    CHECK(class_addMethod(object_getClass(cfg),
+                          sel_registerName("cacheKingKongsConfigArray"),
+                          (IMP)PhKongCache, "@16@0:8"));
+}
+
 
 #pragma mark - 机制测试（失败路径：类/方法/签名不符必须 skip 且不改任何东西）
 
@@ -305,13 +347,14 @@ static void test_real_specs(void) {
     CHECK(BDFRSendBool((id)gPersonalCfg, gameSel) == true);
 
     unsigned logsBefore = gLogLines;
-    BDFRInstallAll();     // H1+H2 一对 + H3 独立
+    BDFRInstallAll();     // H1+H2 一对 + H3 独立 + H4（依赖校验通过）
     CHECK(BDFRSpecHomeRecommend.installed && BDFRSpecHomeRowCount.installed
-          && BDFRSpecGameCenter.installed);
+          && BDFRSpecGameCenter.installed && BDFRSpecKingKongsCache.installed);
     CHECK(*BDFRSpecHomeRecommend.orig == (IMP)PhHomeRecommend);
     CHECK(*BDFRSpecHomeRowCount.orig == (IMP)PhRowCount);
     CHECK(*BDFRSpecGameCenter.orig == (IMP)PhGameCenter);
-    CHECK(gLogLines == logsBefore + 3);           // 三条 installed 日志
+    CHECK(*BDFRSpecKingKongsCache.orig == (IMP)PhKongCache);
+    CHECK(gLogLines == logsBefore + 4);           // 四条 installed 日志
     logsBefore = gLogLines;                       // 往后只数 hit 日志
 
     // 1) 默认（三个开关都开）：首页整块与游戏都被抑制
@@ -369,6 +412,211 @@ static void test_real_specs(void) {
     gRemoveRecommend = YES;
 }
 
+#pragma mark - H4：金刚区数组过滤（真名 fake 类 + 真实 FeatureRemoval.h）
+
+// ids 逐个变成真实 model（关联的 NSNumber 就是它的 kingKongId）。
+static NSArray *BDFRKongArray(NSArray *ids) {
+    NSMutableArray *a = [NSMutableArray array];
+    for (NSNumber *n in ids) [a addObject:BDFRMakeKongModel(n.longLongValue)];
+    return a;
+}
+// 15 个连续 id，模拟真实金刚区（其中 6=小说、13=求职）。
+static NSArray *BDFRKongArray1To15(void) {
+    NSMutableArray *a = [NSMutableArray array];
+    for (NSInteger i = 1; i <= 15; i++) [a addObject:BDFRMakeKongModel(i)];
+    return a;
+}
+static NSArray *BDFRSendKongArray(id cfg, SEL sel) {
+    id (*imp)(id, SEL) = (id (*)(id, SEL))class_getMethodImplementation(object_getClass(cfg), sel);
+    return (NSArray *)imp(cfg, sel);   // 返回类型按 @16@0:8 就是 id；测试按 NSArray * 用
+}
+
+// H4 安装**之前**跑（此刻槽里还是原实现）：原 getter 原样透传同一个数组对象。
+// 必须排在 test_real_specs 的 BDFRInstallAll() 之前 —— 那之后槽里已经是替换实现。
+static void test_kong_getter_before_install(void) {
+    Class cfg = NSClassFromString(@"BDPanFeedHomeConfig");
+    SEL sel = sel_registerName("cacheKingKongsConfigArray");
+    CHECK(cfg != Nil);
+    CHECK(BDFRSpecKingKongsCache.installed == NO);
+
+    NSArray *full = BDFRKongArray(@[@1, @13, @2, @6, @3]);
+    gKongSource = full;
+    gKongOrigCalls = 0;
+    CHECK(BDFRSendKongArray((id)cfg, sel) == full);      // 同一个对象，没被复制
+    CHECK(gKongOrigCalls == 1);                          // 原 getter 确实被调了一次
+}
+
+// H4 已由 test_real_specs 里的 BDFRInstallAll() 装上，这里只验证过滤行为。
+static void test_kong_filter(void) {
+    Class cfg = NSClassFromString(@"BDPanFeedHomeConfig");
+    SEL sel = sel_registerName("cacheKingKongsConfigArray");
+    CHECK(cfg != Nil);
+    CHECK(BDFRSpecKingKongsCache.installed == YES);
+    CHECK(*BDFRSpecKingKongsCache.orig == (IMP)PhKongCache);   // orig 槽里是原实现，不是替换实现
+
+    // 1) 15 个真实 model：6/13 被去掉，其余 13 个同对象同顺序；原 getter 只被调一次
+    NSArray *all = BDFRKongArray1To15();
+    gKongSource = all;
+    unsigned before = gKongOrigCalls;
+    unsigned logsBefore = gLogLines;
+    NSArray *out = BDFRSendKongArray((id)cfg, sel);
+    CHECK(gKongOrigCalls == before + 1);                 // 只穿透一次原实现
+    CHECK(out != all);                                   // 有真移除 -> 新数组
+    CHECK([out isKindOfClass:[NSArray class]]);
+    CHECK(out.count == 13);
+    for (NSUInteger i = 0, j = 0; i < 15; i++) {
+        id original = [all objectAtIndex:i];
+        if (i == 5 || i == 12) continue;                // id 6 / 13 被去掉
+        CHECK([out objectAtIndex:j] == original);        // identity 与顺序都不变
+        j++;
+    }
+    CHECK(gLogLines == logsBefore + 1);                  // 首次真移除才 hit
+
+    // 2) 无网络兜底数组（default 分支）同样含 6/13：一样被滤掉
+    NSArray *fallback = BDFRKongArray(@[@1, @2, @3, @4, @5, @6, @7, @13, @8, @9, @10]);
+    gKongSource = fallback;
+    before = gKongOrigCalls;
+    out = BDFRSendKongArray((id)cfg, sel);
+    CHECK(gKongOrigCalls == before + 1);
+    CHECK(out.count == 9);
+    for (id kept in out) CHECK([fallback containsObject:kept]);
+    CHECK([out objectAtIndex:5] == [fallback objectAtIndex:6]);   // id 7 顺次上移
+    CHECK([out objectAtIndex:6] == [fallback objectAtIndex:8]);   // id 8 顺次上移
+
+    // 3) 只有真正的 model 才按 id 过滤：NSString / NSNull / NSNumber 都原样保留、不发 kingKongId。
+    // 先存成变量再比 identity —— 直接和字面量比会踩 -Wobjc-string-compare。
+    NSString *strayStr = @"not-a-model";
+    NSNull *strayNull = [NSNull null];
+    NSNumber *strayNum = @13;                            // 数值对，但不是 model 实例
+    id jobModel = BDFRMakeKongModel(13);
+    id novelModel = BDFRMakeKongModel(6);
+    id keepModel = BDFRMakeKongModel(5);
+    NSMutableArray *mixed = [NSMutableArray array];
+    [mixed addObjectsFromArray:@[strayStr, jobModel, strayNull, novelModel, keepModel, strayNum]];
+    gKongSource = mixed;
+    before = gKongOrigCalls;
+    out = BDFRSendKongArray((id)cfg, sel);
+    CHECK(gKongOrigCalls == before + 1);
+    CHECK(out.count == 4);                               // 只掉了两个真 model
+    CHECK([out objectAtIndex:0] == strayStr);
+    CHECK([out objectAtIndex:1] == strayNull);
+    CHECK([out objectAtIndex:2] == keepModel);
+    CHECK([out objectAtIndex:3] == strayNum);            // NSNumber 不是 model，不该被滤
+
+    // 4) 没有目标项：返回**同一个原数组**（identity），且不再 hit
+    NSArray *keep = BDFRKongArray(@[@1, @2, @3]);
+    gKongSource = keep;
+    before = gKongOrigCalls;
+    logsBefore = gLogLines;
+    out = BDFRSendKongArray((id)cfg, sel);
+    CHECK(out == keep);
+    CHECK(gKongOrigCalls == before + 1);
+    CHECK(gLogLines == logsBefore);                      // 没移除就不 hit
+
+    // 5) 全被过滤：返回非 nil 空数组
+    gKongSource = BDFRKongArray(@[@6, @13]);
+    before = gKongOrigCalls;
+    out = BDFRSendKongArray((id)cfg, sel);
+    CHECK(out != nil);
+    CHECK([out isKindOfClass:[NSArray class]]);
+    CHECK(out.count == 0);
+    CHECK(gKongOrigCalls == before + 1);
+
+    // 6) nil / 非数组 / 空数组：原样透传同一个对象
+    before = gKongOrigCalls;
+    gKongSource = nil;
+    CHECK(BDFRSendKongArray((id)cfg, sel) == nil);
+    gKongSource = (NSArray *)@"not-an-array";
+    CHECK(BDFRSendKongArray((id)cfg, sel) == gKongSource);
+    gKongSource = @[];
+    CHECK(BDFRSendKongArray((id)cfg, sel) == gKongSource);
+    CHECK(gKongOrigCalls == before + 3);                 // 三次都透传到原实现
+
+    // 7) 总开关 / 诊断 / 独立开关关掉 -> 返回同一个原对象（原行为）
+    NSArray *sw = BDFRKongArray(@[@1, @13, @6]);
+    gKongSource = sw;
+    gRemoveJobNovel = NO;
+    CHECK(BDFRSendKongArray((id)cfg, sel) == sw);
+    gRemoveJobNovel = YES;
+    gDumpOnly = YES;
+    CHECK(BDFRSendKongArray((id)cfg, sel) == sw);
+    gDumpOnly = NO;
+    gEnabled = NO;
+    CHECK(BDFRSendKongArray((id)cfg, sel) == sw);
+    gEnabled = YES;
+
+    // 8) 幂等：重复安装不重装、不递归，orig 槽不被覆盖；调用仍只穿透一次原实现
+    gKongSource = sw;
+    before = gKongOrigCalls;
+    CHECK(BDFRInstallKingKongs() == YES);
+    CHECK(gKongOrigCalls == before);                     // 安装本身不调用 getter
+    CHECK(*BDFRSpecKingKongsCache.orig == (IMP)PhKongCache);
+    out = BDFRSendKongArray((id)cfg, sel);
+    CHECK(out.count == 1);                               // 只剩 id 1
+    CHECK(gKongOrigCalls == before + 1);
+}
+
+// 依赖校验（安装前 preflight）：依赖不过 -> 目标方法的 IMP 与 orig 槽都不许动；
+// 依赖正常 -> 独立的 dummy 目标只装一次。用独立 fake 类，不去改已存在方法的 encoding
+// （runtime 也不允许改）。本用例会覆盖运行期的依赖全局，所以放在最后跑。
+static void test_kong_dependency_gate(void) {
+    Class badModel = BDFRMakeClass("BDFRKongBadIDModel", Nil);
+    CHECK(class_addMethod(badModel, sel_registerName("kingKongId"),
+                          (IMP)PhBoolNo, "v32@0:8"));     // 故意错的签名
+    Class goodModel = BDFRMakeClass("BDFRKongGoodIDModel", Nil);
+    CHECK(class_addMethod(goodModel, sel_registerName("kingKongId"),
+                          (IMP)PhKongID, "q16@0:8"));
+    Class targetCfg = BDFRMakeClass("BDFRKongTargetConfig", Nil);
+    CHECK(class_addMethod(object_getClass(targetCfg),
+                          sel_registerName("cacheKingKongsConfigArray"),
+                          (IMP)PhKongCache, "@16@0:8"));
+
+    SEL cacheSel = sel_registerName("cacheKingKongsConfigArray");
+    IMP targetImpBefore = method_getImplementation(class_getClassMethod(targetCfg, cacheSel));
+
+    // a) 依赖签名不符 -> 整条跳过：目标的 IMP 与 orig 都不动
+    IMP origBad = NULL;
+    BDFRSpec badTarget = BDFRTestSpec("BDFRKongTargetConfig", "cacheKingKongsConfigArray", YES,
+                                      "@16@0:8", 2, (IMP)BDFRKingKongsCache, &origBad, "t-kong-bad-dep");
+    BDFRSpec badDep = BDFRTestSpec("BDFRKongBadIDModel", "kingKongId", NO,
+                                   "q16@0:8", 2, NULL, NULL, "t-kong-bad-dep");
+    CHECK(BDFRResolve(&badDep) == NULL);
+    CHECK(BDFRInstallKingKongsWith(&badDep, &badTarget) == NO);
+    CHECK(badTarget.installed == NO);
+    CHECK(origBad == NULL);
+    CHECK(method_getImplementation(class_getClassMethod(targetCfg, cacheSel)) == targetImpBefore);
+
+    // b) 依赖类缺失 -> 同样什么都不动
+    IMP origMissing = NULL;
+    BDFRSpec missingTarget = BDFRTestSpec("BDFRKongTargetConfig", "cacheKingKongsConfigArray", YES,
+                                          "@16@0:8", 2, (IMP)BDFRKingKongsCache, &origMissing, "t-kong-missing-dep");
+    BDFRSpec missingDep = BDFRTestSpec("BDFRKongIDModelMissing", "kingKongId", NO,
+                                       "q16@0:8", 2, NULL, NULL, "t-kong-missing-dep");
+    CHECK(BDFRInstallKingKongsWith(&missingDep, &missingTarget) == NO);
+    CHECK(missingTarget.installed == NO);
+    CHECK(origMissing == NULL);
+    CHECK(method_getImplementation(class_getClassMethod(targetCfg, cacheSel)) == targetImpBefore);
+
+    // c) 依赖正常 -> dummy 目标装得上：orig 存原 IMP、槽换成替换实现、重复安装幂等
+    IMP origGood = NULL;
+    BDFRSpec goodTarget = BDFRTestSpec("BDFRKongTargetConfig", "cacheKingKongsConfigArray", YES,
+                                       "@16@0:8", 2, (IMP)BDFRKingKongsCache, &origGood, "t-kong-good-dep");
+    BDFRSpec goodDep = BDFRTestSpec("BDFRKongGoodIDModel", "kingKongId", NO,
+                                    "q16@0:8", 2, NULL, NULL, "t-kong-good-dep");
+    CHECK(BDFRResolve(&goodDep) != NULL);
+    CHECK(BDFRInstallKingKongsWith(&goodDep, &goodTarget) == YES);
+    CHECK(goodTarget.installed == YES);
+    CHECK(origGood == (IMP)PhKongCache);                       // 原 IMP 被保存
+    CHECK(method_getImplementation(class_getClassMethod(targetCfg, cacheSel))
+          == (IMP)BDFRKingKongsCache);                         // 槽换成替换实现
+    unsigned calls = gKongOrigCalls;
+    CHECK(BDFRInstallKingKongsWith(&goodDep, &goodTarget) == YES);   // 幂等：不重装
+    CHECK(origGood == (IMP)PhKongCache);
+    CHECK(method_getImplementation(class_getClassMethod(targetCfg, cacheSel))
+          == (IMP)BDFRKingKongsCache);
+    CHECK(gKongOrigCalls == calls);                             // 安装过程不调用 getter
+}
+
 #pragma mark - main
 
 int main(void) {
@@ -379,7 +627,12 @@ int main(void) {
         test_pair_checked_before_install();
         test_pair_refuses_when_slot_is_our_hook();
         test_install_success_and_idempotent();
-        test_real_specs();
+        // 金刚区的 fake 类先建好：BDFRInstallAll() 里 H4 的依赖校验要查它们。
+        BDFRSetupKongClasses();
+        test_kong_getter_before_install();   // 必须早于 BDFRInstallAll()
+        test_real_specs();                   // 这里面 BDFRInstallAll() 装上 H4
+        test_kong_filter();
+        test_kong_dependency_gate();         // 会覆盖依赖全局，放最后
 
         printf("%s: %d 项失败（日志共 %u 行）\n",
                gFailures ? "FAIL" : "PASS", gFailures, gLogLines);

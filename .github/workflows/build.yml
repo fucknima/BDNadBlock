@@ -24,6 +24,90 @@ jobs:
             -framework Foundation -o "$bin" tests/feature_removal_test.mm
           "$bin"
 
+      # Preferences.h 的读写原语/规格表测试（isolated suite，不碰 standardUserDefaults）。
+      # 这不是真机测试：不启 UIKit，菜单 UI 只能在真机或模拟器上看。
+      - name: Host test (Preferences.h, clang++, not a device test)
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/preferences_test"
+          clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
+            -framework Foundation -o "$bin" tests/preferences_test.mm
+          "$bin"
+
+      # NetworkRules.h 的 matcher 回归：与 Tweak.xm include 同一份真身实现，开关用内存假函数。
+      # 这不是真机测试：不注册 NSURLProtocol、不发请求，只证明规则命中与开关组合。
+      - name: Host test (NetworkRules.h, clang++, not a device test)
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/network_rules_test"
+          clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
+            -framework Foundation -o "$bin" tests/network_rules_test.mm
+          "$bin"
+
+      # SearchDataRemoval.h 的数据层机制测试（动态 fake 类 + 真实同名 selector）。
+      # 这不是真机测试：只证明清空/透传/幂等/签名不符不 attach，不证明搜索框真实布局。
+      - name: Host test (SearchDataRemoval.h, clang++, not a device test)
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/search_data_test"
+          clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
+            -framework Foundation -o "$bin" tests/search_data_test.mm
+          "$bin"
+
+      # TabRemoval.h 的数据层机制测试（动态 fake 类 + 真实同名 selector）。
+      # 这不是真机测试：只证明过滤/索引换算/整组校验这些机制，真机底部栏效果仍需实测。
+      - name: Host test (TabRemoval.h, clang++, not a device test)
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/tab_removal_test"
+          clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
+            -framework Foundation -o "$bin" tests/tab_removal_test.mm
+          "$bin"
+
+      # PersonalRemoval.h 的机制测试（真实类名 + 真实 spec 安装器，开关用内存假函数）。
+      # 这不是真机测试：只证明 gate 装上/透传/幂等，不证明「我的」页轮播真的消失。
+      - name: Host test (PersonalRemoval.h, clang++, not a device test)
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/personal_removal_test"
+          clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
+            -framework Foundation -o "$bin" tests/personal_removal_test.mm
+          "$bin"
+
+      # RenewButtonRemoval.h 的机制测试（自带的最小 fake UIButton 只为测机制）。
+      # 这不是真机测试、也不是 UI 运行测试：真 UIKit 声明由 UIKit 编译步骤（ui_compile）覆盖。
+      - name: Host test (RenewButtonRemoval.h, clang++, not a device test)
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/renew_button_test"
+          clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
+            -framework Foundation -o "$bin" tests/renew_button_test.mm
+          "$bin"
+
+      # PersonalViewRemoval.h 的机制测试（自带最小 fake UIView 只为测机制）。
+      # 这不是真机测试、也不是 UI 运行测试：真 UIKit 声明由 UIKit 编译步骤（ui_compile）覆盖。
+      - name: Host test (PersonalViewRemoval.h, clang++, not a device test)
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/task_card_test"
+          clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
+            -framework Foundation -o "$bin" tests/task_card_test.mm
+          "$bin"
+
+      # UIKit 组件的编译检查：SettingsMenu / FeatureRemoval / TabRemoval / PersonalRemoval /
+      # PersonalViewRemoval / RenewButtonRemoval / SearchDataRemoval / SearchViewRemoval /
+      # MenuEntry 九个产品 header，
+      # 用真实 iOS SDK 过一遍 -Werror，并由 tests/ui_compile.mm 里的最小调用 TU
+      # 把每个入口都引用到（不靠 -Wno、不删函数）。
+      # 仅 -fsyntax-only：不运行、不产出 app、不启模拟器、不建工程，不是 UI 运行测试。
+      - name: Compile UIKit components (syntax only, not runtime)
+        run: |
+          set -euo pipefail
+          sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
+            -target arm64-apple-ios15.0 -isysroot "$sdk" -I . -x objective-c++ \
+            -fsyntax-only tests/ui_compile.mm
+
       # 不用 install-theos 脚本：它会打 api.github.com，CI 上容易被限流返回 exit 8
       - name: Install Theos + deps
         run: |
@@ -70,8 +154,9 @@ jobs:
           ls -la dist/
           file dist/*.dylib 2>/dev/null || true
 
+      # 只有 main 才产出可下载的库/包：验证分支（手工 dispatch）只编译 + 跑 host 测试，不上传半成品。
       - name: Upload dylib
-        if: success()
+        if: success() && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
           name: BDNadBlock.dylib
@@ -79,7 +164,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload deb
-        if: success()
+        if: success() && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
           name: BDNadBlock.deb

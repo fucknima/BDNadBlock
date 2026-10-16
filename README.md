@@ -1,191 +1,206 @@
 # BDNadBlock
 
-百度网盘 (com.baidu.netdisk) 13.32.2 的广告拦截 + 推荐内容/游戏中心移除 tweak。
+百度网盘 (com.baidu.netdisk) **13.32.2** 的净化 tweak：一个设置菜单 + **15 个保留配置键**
+（14 个可切换项 + 1 个「年卡待定位」的说明行）。菜单之下挂两层广告拦截
+（网络规则 / 展示方法）和若干「原生组装或纯显示谓词」处的精准 hook。
 
-**实验版本，不代表已去除全部广告或全部入口。** 抓包 387 证明旧版推荐/游戏移除无效；
-新版改为在**原生组装/纯显示谓词**处移除：首页「推荐/创意」整块 + 「我的」页游戏中心区块，
-共 3 个精准 typed hook（见下）。根因与证据见 [本次研究记录](docs/capture-387.md)。
-构建成功、selector 存在、hook 安装成功都不等于真机功能验证；换上新版后**必须彻底退出 App 再重启**。
+**实验版本。** 编译通过、selector 存在、hook 装上，都**不等于**真机生效。日志里两条也不同：
+`installed` = 替换实现装上了，`hit` = 本组件的抑制分支执行过一次；**两者都不是页面效果验证**。
+本项目**不保证所有相关请求都停止**：仅隐藏视图的规则下数据请求可能照旧发生；
+原生 gate（如游戏中心开关）可能在创建/请求之前就阻断；网络 matcher 命中的请求本来就不发出。
+根因与抓包证据见 [docs/capture-387.md](docs/capture-387.md)，菜单接线契约见 [docs/menu-contract.md](docs/menu-contract.md)。
 
-## 规则从哪来
+前提：iOS 15（`Makefile` TARGET 15.0），`ARCHS = arm64 arm64e`。
 
-两条证据链（需要区分静态观测与真机行为）：
+## 设置入口
 
-**A. 抓包** —— 2026-10-15 Loon，632 条请求 / 30 秒窗口，**逐条看响应体定性**。
-
-**B. 二进制** —— `__objc_classlist` 34952 项 → `class_ro_t.baseMethodList`，
-拿到真实方法名和 type encoding。用 `scripts/verify_selectors.py` 复核：
-
-```bash
-python3 scripts/verify_selectors.py /path/to/Payload/netdisk_iPhone.app/netdisk_iPhone
-# 18 个广告 selector + 3 个 feature hook，0 个有问题
-```
-
-App 升级后必须重跑，selector 失效会直接报出来。feature hook 这一组核对得更严：
-类/selector 必须存在，且方法要在**该类自己的方法表**里（类方法看 metaclass），
-完整 type encoding 逐字节一致，否则运行时安装器会 skip。
-
-## 网络层
-
-注册 `BDNadProtocol`（`NSURLProtocol` 子类），把两个工厂方法
-（`defaultSessionConfiguration` / `ephemeralSessionConfiguration`）挂上这个协议类。
-请求发出前按 host/path 判定，命中直接返回 `200 {}`，不真正出网。
-
-### 拦什么（响应体证实）
-
-| 目标 | 位置 | 证据 |
-|---|---|---|
-| 首页 banner 广告 | `pan.baidu.com/buy/ad/*` | `adList[0].title="双十一上淘宝"`，`actionUrl=ulk.alimama.com/tb?...` |
-| 激励任务广告 | `pan.baidu.com/rest/2.0/pcs/adv` | `scene_list[].task_list[].complete_notice="恭喜获得1次音频倍速播放机会"` |
-| 广告开关 | `afdconf.baidu.com/afd/platform` | `nad_*` 明文开关下发 |
-| 广告点击归因 | `nsclick.baidu.com` | `/v.gif` 打点 |
-| 百度营销云 | `sofire.baidu.com` | 返回加密 `exkey`（广告密钥） |
-| 趣盟 SDK | `*.yunxish.com`、`cpc-service-square.iggrowth.cn` | `qumeng_*` 配置，SDK 1.3.8 |
-| 三方联盟 | `ef-dongfeng.tanx.com`、`tnc3-alisc1.zijieapi.com`、`mssdk.volces.com`、`huiduapi.nuomi.com` | 阿里妈妈 / 穿山甲 / 火山 |
-| 投屏广告 | `conf.hpplay.cn`、`vfa.hpplay.cn`、`ssdkauth.hpplay.cn`、`logu.hpplay.cn` | `csj_ad_switch:{enabled:1}` |
-| 游戏中心接口 | `pan.baidu.com/act/v2/gamecenter/*` | `historyplay` / `gametaskinfo` / `recommend` |
-| 游戏中心素材 | 路径含 `/gameCenter/` 或 `_swan-game_` | 走 P2P 镜像，host 不固定，只能按路径判 |
-| 推荐内容 | `pan.baidu.com/recommend/searchbox/bottom`、`aisearch/agent/memorycenter/getrecommendcards` | 搜索框底部推荐词 |
-
-### 不拦什么（**曾经的误判，实测是功能**）
-
-| 曾经想拦 | 实际是什么 |
-|---|---|
-| `pan.baidu.com/feed/kingkongdistrict` | 首页**金刚区快捷入口**。15 个条目全是真功能：相册/视频/求职/小说/扫描/听记/文档/学习/音频/笔记/打印/备份/星盘/同步/全网搜 |
-| `*/amis/` | 首页**天气特效包**（rain/snow/fog/sunny_v5.zip）、音效 mp3、**首页 banner 图**。拦掉首页特效和图标全没 |
-| `*.jomoxc.com`、`*.antpcdn.com`、`*.yingt.asia` | 上面那批静态资源的 **P2P 加速镜像**（`antpcdn.com:19001/e/s0-ant.baidu.com/staticsns/amis/...`） |
-| `*.cdn.bcebos.com/cmpkg/` | 不只是游戏，还有 **`1_swan-core` —— 小程序运行时**。只能精确拦 `1_swan-game_` |
-
-## 方法层
-
-18 个 selector / 11 个类，**只 hook「把广告显示出来」这一步**，
-不碰 bidding / task / timeout 管理器。
-
-理由：`BDNCSplashBiddingTaskManager` 持有开屏超时计时器
-（`handleAdvertiseFetchTimeOutEvent` / `startAdvertiseFetchTimer`），
-动了它可能让开屏卡死；显示层 no-op 也可能影响回调与等待状态，仍需真机验证。
-
-返回类型已核对：11 个 `v`(void)，7 个 `B`(BOOL)。
-这只说明返回类型，不证明业务状态、回调、布局或所有 ABI 细节安全。
-
-| 类 | selector |
-|---|---|
-| `BDNCSplashAdvertiseWindow` | `showSplashWithActivityModel:`、`showSplashWithImageURL:protocol:showAdWarn:` |
-| `BDNCSplashAdvertiseViewController` | `addSplashAdvertiseWithAdvertiseModel:`、`addSplashWithActivityModel:`、`addSplashWithImageURL:protocol:showAdWarn:`、`showDetailSplashAdvertise` |
-| `BDNCBUAdsSplashAD` | `showAdWithViewController:` |
-| `BDNCBrandSplashAd` | `showSplashViewInRootViewController:` |
-| `BDNCBuAdsRewardVideoAD` | `showAd:` |
-| `BDNCRewardVideoAdBaseTask` | `showAdvertise` |
-| `BDNCNativeAdBaseTask` | `handleShow:` |
-| `ABUSplashAd` | `showInWindow:`、`showInWindowWithBlock:` |
-| `ABUInterstitialAd` | `showAdFromRootViewController:` |
-| `ABUInterstitialProAd` | `showAdFromRootViewController:extraInfos:` |
-| `ABURewardedVideoAd` | `showAdFromRootViewController:`、`:extraInfos:`、`:extroInfos:`（原代码拼错，两个都在） |
-
-## 精准 feature hook（3 个，`FeatureRemoval.h`）
-
-不是 no-op 整类，而是三个**typed** 替换实现，在启动构造器（`__attribute__((constructor))`）
-里同步安装，不走那两条 1.5s / 3s 定时器。先保存原 IMP 再 `method_setImplementation`，
-调用时按开关决定抑制还是透传，不对回调与布局做任何猜测。
-
-只有冷启动、且安装发生在页面组装之前才会生效（同一构造器先装 hook、后由 UI 组装页面）。
-**这是静态推断，不是已观测的运行事实**：真机先看日志里有没有三行 `[BDNadFeature] installed`。
-
-| 目标 | 类 / 方法（类型） | encoding | 抑制时返回 |
-|---|---|---|---|
-| 首页「推荐/创意」整块 | `+[BHSettings isMSHSwitchTypeHomeRecommend]` | `B16@0:8` | `false`（B 编码用内建 bool） |
-| 同上，去掉残留的容器行（含「开启推荐」条） | `-[BDPanNewMSHContentViewController tableView:numberOfRowsInSection:]` | `q32@0:8@16q24` | `0` |
-| 「我的」页游戏中心区块 | `+[BDPanPersonalConfig gameCenterSwitch]` | `B16@0:8` | `false`（同上） |
-
-- **创意入口会一起隐藏**：原生关闭态的 tab 头本来就被替换成「开启推荐」条，
-  第二条把这一行也去掉，所以创意社区在这个容器里的入口一并消失。
-  本轮**没有验证**创意社区是否还有本模块之外的独立入口。
-- 首页那两条是**一对**：先一起校验（含「槽里已经就是本 hook」这种冲突），两个都可装才装，
-  任一条不通过（类缺失、方法只有继承实现、encoding 或参数个数不符）就**两条都不装**。游戏那条独立校验。
-- 安装器幂等：重复安装不会把自己的替换实现存成「原实现」，也不会多包一层。
-- 静态实现里固定区块（最近文件、相册、备份等）在 `tableHeaderView` 上，这三个方法不改它的实现；
-  **真机布局仍待验证**。
-- **替换后必须彻底退出 App 再重启**（后台杀不干净）：只有冷启动才会重新读这些 hook。
-- `tests/feature_removal_test.mm` 是 **macOS host 机制测试，不是真机测试**，
-  只证明匹配/跳过/透传/幂等这些机制。本地跑（与 CI 同一条命令）：
-
-```bash
-clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
-  -framework Foundation -o /tmp/frt tests/feature_removal_test.mm && /tmp/frt
-```
-
-## 防崩措施
-
-1. **不交换 IMP**。用 `method_setImplementation` + 保存原 IMP 直调。
-   上一版用 `method_exchangeImplementations` 写反了方向 → 无限递归 → `depth 12353`
-   打穿 Stack Guard 闪退。现在不通过被替换的同名 selector 调回自身。
-2. **返回类型闸门**。返回结构体/浮点/复数的方法一律跳过 —— no-op 只保证 `x0` 有效。
-3. **保留 1.5 秒延迟**。这不代表 app ready，且不能覆盖已创建的网络会话；
-   旧崩溃栈只证明递归，不证明 Foundation 初始化异常。
-4. **日志落盘也延迟**。没有证据表明日志写盘是此前崩溃的原因。
-5. **跳过生命周期方法**。`init` / `dealloc` / `copy` / `load` / `initialize` / setter 等。
-6. **IMP 全局复用**。`imp_implementationWithBlock` 每次调用生成一个永不释放的
-   trampoline，共用一个。
-7. **按类下刀**。`BDHookMap` 是「类 → selector」的映射，不会把同名方法误伤到别的类。
+「我的 → 设置」页右上角追加一个 **「网盘净化」** 按钮，点开是 `UITableViewStyleInsetGrouped`
+的菜单页。实现方式是给两个候选设置页各自的 `-viewDidLoad` 装 post-hook
+（`SettingConfigViewController` / `SettingViewController`），先调原实现，再把按钮
+**追加**到 `navigationItem.rightBarButtonItems` 末尾（保留原按钮与顺序）。
+两个类各自独立校验，一个不过只 skip 它自己。
+**真机上到底哪一页会出现这个按钮未验证。** 入口按钮不受总开关/诊断开关影响（关掉净化也仍能进菜单）。
+按钮只在 `-viewDidLoad` 追加一次，之后不再补挂：若原生之后重建或重置这条导航栏，入口可能就不在了
+（未验证，也不加定时器去补）。
 
 ## 开关
 
-`NSUserDefaults`：
+**唯一默认值表在 `Preferences.h`**（15 个保留配置键），菜单标题/分组也从那张表取，代码里不再抄第二份。
+只写本组件这 15 个键到 `NSUserDefaults`，不写账号、缓存或原生偏好。
 
-| key | 默认 | 作用 |
+**保存后必须彻底退出 App 再冷启动才生效**：运行期所有 hook 读的是**进程启动快照**，
+菜单改值不改当前进程、不热改 UIKit、不自动退出、不清网盘数据。
+
+| key | 菜单标题 | 默认 | 状态 |
+|---|---|---|---|
+| `BDNadBlockEnabled` | 启用网盘净化 | YES | 总开关 |
+| `BDRemoveRecommend` | 隐藏推荐/创意区域 | YES | 已实现 |
+| `BDRemoveHomePromo` | 隐藏首页年卡促销 | YES（仅保留配置） | **未实施**，菜单显示「待定位，本版本暂时保留」 |
+| `BDRemoveAITab` | 隐藏底部库库AI | YES | 已实现（索引换算需真机验证） |
+| `BDRemoveJobNovel` | 隐藏求职/小说入口 | YES | 已实现 |
+| `BDRemoveSearchPromo` | 隐藏搜索推广词 | YES | 已实现 |
+| `BDRemoveSearchAI` | 隐藏搜索框AI按钮 | YES | 已实现 |
+| `BDRemoveGameCenter` | 隐藏游戏中心 | YES | 已实现 |
+| `BDRemovePersonalPromotions` | 隐藏推广入口整排 | YES | 已接线（基线 CI 通过） |
+| `BDRemovePersonalBanner` | 隐藏活动轮播 | YES | 已实现 |
+| `BDRemoveTaskCard` | 隐藏任务系统卡片 | YES | 已接线（基线 CI 通过） |
+| `BDRemoveRenewButton` | 隐藏续费按钮 | **NO** | 已实现 |
+| `BDNadBlockNetwork` | 广告网络拦截·旧规则 | YES | 实验 |
+| `BDNadBlockAdMethods` | 广告展示拦截·实验 | YES | 实验 |
+| `BDNadBlockDumpOnly` | 仅诊断，不执行净化 | **NO** | 诊断 |
+
+开关 **ON = 去除/拦截**。所有去除类开关的前置条件都是
+`BDNadBlockEnabled && !BDNadBlockDumpOnly`。总门不通过时，网络层整层不进进程
+（不换 `NSURLSessionConfiguration` 工厂、不注册 `NSURLProtocol`）。
+
+## 净化功能表
+
+每项都只动「原生组装 / 纯显示谓词 / 数据写入口」，不改账号与缓存，不拦整条接口。
+
+| 开关 | 落点（类 / selector） | 保留什么 / 注意 |
 |---|---|---|
-| `BDNadBlockEnabled` | YES | 方法层总开关 |
-| `BDNadBlockDumpOnly` | NO | YES = 只 dump 不下刀 |
-| `BDNadBlockNetwork` | YES | 网络层总开关 |
-| `BDRemoveRecommend` | YES | 首页「推荐/创意」整块（H1+H2 一对） |
-| `BDRemoveGameCenter` | YES | 「我的」页游戏中心区块 |
+| 推荐/创意 | `+[BHSettings isMSHSwitchTypeHomeRecommend]` → NO **成对** `-[BDPanNewMSHContentViewController tableView:numberOfRowsInSection:]` → 0 | 关推荐后 tab 头会被换成「开启推荐」条，第二条把它也去掉，所以创意社区在本容器内的入口一并消失；**本容器之外是否还有独立入口未验证** |
+| 求职/小说 | `+[BDPanFeedHomeConfig cacheKingKongsConfigArray]` → 只从**最终模型数组**里去掉 `kingKongId` 13（求职）/ 6（小说） | 其余元素保序、同对象原样透传，**不拦 `/feed/kingkongdistrict` 这个接口**；相册/视频/扫描/备份/容量/最近等**全部保留** |
+| 搜索推广词 | 数据层 `-[BDPanSearchManager setStaticWordList:]`（`_staticWordList` 唯一写入口）传空数组；UI 层 `BDPanNewMSHSearchView` 三条 post-hook（`setupView` / `searchPlaceholderUpdated:` / `updateConstraintsWithProgress:`）走原实现的清空路径，并用 `SearchPlaceholder` 本地化 key 恢复普通占位文案 | **全部轮播词都去掉**（用户选定），不做分类/文本匹配；不清用户输入、不动搜索历史、不碰轮播词落盘 |
+| 搜索框 AI | 隐藏 `genflowButton` / `genflowAnimationView` / `cameraButton` / `cameraButtonAnimateBackground` 四个真实视图，并把 `searchButton.contentEdgeInsets` 收回 `(0, 8, 0, 12)` | 不改任何约束/frame，无延时重试；留白视觉效果待真机确认 |
+| 底部 AI tab | `-[BDPanTabBarController setTabBarItemModels:]` 过滤**只有 `itemTabName == @"shenji_page"`** 的那条 + `customTabBar` 上下文 + 四个索引 getter 换算（`friendsIndex`/`magicTrickIndex`/`findSourceIndex`/`settingIndex`） | 六条 hook + 两个只读依赖全部校验通过才整组 attach；数组会被滤空时整次不滤。**可见模型过滤并同步索引，需真机测试登录 / 退出 / 企业空间切换** |
+| 我的·游戏中心 | `+[BDPanPersonalConfig gameCenterSwitch]` → NO | 组装闸门：只阻止新建区块，不负责删除已显示区块 |
+| 我的·活动轮播 | `+[BDPanPersonalConfig bannerSwitch]` → NO | 该开关为 NO 时原生就不建整个 banner section |
+| 我的·推广整排 | `-[BDPanPersonalWalletSection heightForView]` → `-6.0`；`-[BDPanPersonalCenterWalletSection heightForView]` → `-3.0`（各 class 自己的原生收起值） | 只影响读这两个 `heightForView` 的路径；不清数据、不拦接口，该区域请求是否仍发生未验证 |
+| 我的·任务卡 | `-[BDPanPersonalSpaceSection layoutViews]` / `-[BDPanPersonalSpaceAndPointSection layoutViews]` post-hook → 隐藏各自 `pointsCard` | 先布局后隐藏；**容量卡与行高常量（80.0 / 96.0）一点没碰**，任务卡位置允许留空 |
+| 我的·续费按钮 | 三处 `-vipButton` getter（`BDPanPersonNewVipCardHeaderView` / `BDPanPersonVipHeaderView` / `BDPanPersonAdvanceVIPHeaderView`）各自独立隐藏按钮 | **默认 NO**；只藏按钮，**整卡既有会员点击行为保留**；三条互不依赖 |
 
-出问题时把 `BDNadBlockNetwork` 或 `BDNadBlockEnabled` 设 NO 即可定位是哪一层。
+各组件都复用 `FeatureRemoval.h` 的同一套安装原语（`BDFRSpec` / `BDFRResolve` /
+`BDFRCanAttach` / `BDFRAttach` / `BDFRInstallSpec` / `BDFRSuppressed`），不另抄一份。
+首页年卡促销（`BDRemoveHomePromo`）**本版未实施**：静态定位未收束，用户选择先做其它项；
+菜单里那一行只有说明文案、没有开关，也不读写它的 saved 值，避免显示成「默认 YES 已生效」。
+规格表里那个默认 YES 只是**保留配置**，启动日志里的 `active BDRemoveHomePromo = 1`
+同样只是快照值，**不是该功能已接线的证据**。
+
+## 网络层（`BDNadBlockNetwork`，实验）
+
+注册 `BDNadProtocol`（`NSURLProtocol` 子类）并挂到 `defaultSessionConfiguration` /
+`ephemeralSessionConfiguration` 两个工厂上，命中即本地返回 `200 {}`，不出网。
+规则与 matcher 全在 `NetworkRules.h`（同一份实现也被 host 测试 include）。
+
+| 判据 | 目标 |
+|---|---|
+| 整个 host（**精确相等**，不是通配子域） | 趣盟 SDK 逐个列出的 host（`show-api.yunxish.com` / `logrcv.yunxish.com` / `cpc-service-square.yunxish.com` 等，另加 `cpc-service-square.iggrowth.cn`）、百度广告开关与点击归因（`afdconf.baidu.com` / `nsclick.baidu.com` / `sofire.baidu.com` / `huiduapi.nuomi.com`）、三方联盟（`ef-dongfeng.tanx.com` / `tnc3-alisc1.zijieapi.com` / `mssdk.volces.com`）、当贝酷开（`conf` / `vfa` / `ssdkauth` / `logu` 四个 `.hpplay.cn`） |
+| host + 路径前缀 | `pan.baidu.com/buy/ad/`（首页 banner 广告）、`pan.baidu.com/rest/2.0/pcs/adv`（激励任务广告） |
+| host + 路径前缀（游戏接口） | `pan.baidu.com` 且路径以 `/act/v2/gamecenter` 开头 —— 受 `BDRemoveGameCenter` 控制 |
+| 任意 host，路径**包含**（不是前缀） | 路径含 `/gamecenter/` 或 `_swan-game_`（游戏素材；走 P2P 镜像，host 每台设备不同，只能按路径判）—— 受 `BDRemoveGameCenter` 控制 |
+| 精确路径（值或末尾多一个斜杠） | `pan.baidu.com/recommend/searchbox/bottom` —— 搜索框底部推广词，受 `BDRemoveSearchPromo` 控制，**与首页推荐分开** |
+| 路径前缀 | `pan.baidu.com/aisearch/agent/memorycenter/getrecommendcards` —— 记忆中心推荐卡片，受 `BDRemoveRecommend` 控制 |
+
+**不拦**（曾经的误判，实测是功能）：`/feed/kingkongdistrict`（金刚区是相册/视频/求职/小说/备份等真实入口）、
+`/api/getsyscfg`（服务端配置下发）、`*/amis/` 静态资源域（首页天气特效包/音效/banner 图）、
+`*.jomoxc.com` / `*.antpcdn.com` / `*.yingt.asia`（上面那批资源的 P2P 镜像）、
+bcebos 的 `cmpkg` 整目录（里面还有 `1_swan-core` 小程序运行时）。
+
+**覆盖范围有限，原因未确定。** 有据可查的一点来自 [docs/capture-387.md](docs/capture-387.md)：
+那批抓包里，**旧版游戏中心匹配规则下的请求仍然收到了非空的服务端响应**
+（例如 `/act/v2/gamecenter/recommend`）；推荐接口 `/feed/cardinfos` 是旧规则**未覆盖**的，不算漏拦。
+抓包没有调用栈，所以**协议族、调用栈、启动时序这些具体原因都未确定**，不写成结论。
+已确知的只有一条：**本层只改 `NSURLSessionConfiguration` 工厂，已经创建好的 session 不会被改写**。
+因此本层是实验项，不宣称「全部拦到」。
+
+## 展示方法层（`BDNadBlockAdMethods`，实验）
+
+18 个 selector / 11 个类（开屏、激励视频、原生信息流、TopOn 聚合层），
+只 hook「把广告显示出来」这一步，**不碰 bidding / task / timeout 管理器**
+（`BDNCSplashBiddingTaskManager` 持有开屏超时计时器，动它可能让开屏卡死）。
+返回类型已核对为 11 个 `v` / 7 个 `B`；**这一层**的通用 no-op 只保证 `x0` 有效，
+所以返回结构体/浮点/复数的方法在这一层一律跳过。**超时与回调行为真机未验证。**
+与网络层是两个独立开关，可单独关掉定位是哪一层。
+
+## 怎么复核
+
+```bash
+# 二进制核对：广告 selector + feature hook + 只读依赖（类自有方法表 + encoding 逐字节一致）
+python3 scripts/verify_selectors.py --selftest          # 解析器自检
+python3 scripts/verify_selectors.py /path/to/Payload/netdisk_iPhone.app/netdisk_iPhone
+# 末行汇总形如：N 个广告 selector + M 个 feature hook + K 个依赖，X 个有问题
+
+# macOS host 机制测试（不启 UIKit、不装 hook 到真 App）；set -e 保证任一失败即非 0
+set -e
+for t in tests/*_test.mm; do
+  bin="/tmp/$(basename "$t" .mm)"
+  clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
+    -framework Foundation -o "$bin" "$t"
+  "$bin"
+done
+
+# tests/ui_compile.mm 不在上面那串里：它需要 iOS SDK，不由 Foundation 循环编译。
+# 本机 macOS 装了 Xcode（iOS 15+ 目标）也能照 workflow 跑，只是不产出/不运行 app：
+#   sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
+#   xcrun --sdk iphoneos clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
+#     -target arm64-apple-ios15.0 -isysroot "$sdk" -I . -x objective-c++ -fsyntax-only tests/ui_compile.mm
+```
+
+App 升级后必须重跑 `verify_selectors.py`：selector 失效会直接报出来。
+
+**CI**：`gh workflow run Build --ref <branch>`（或 Actions 页手动 dispatch）。它跑上面那些
+host 测试、UIKit `-fsyntax-only` 编译、再用 Theos 出 dylib；只有 `main` 分支产出可下载 artifact。
+已核验基线是提交 `2b6e48e` 的 CI
+（<https://github.com/fucknima/BDNadBlock/actions/runs/38843317180>）：**8 组 Foundation 机制测试通过**、
+UIKit strict syntax 编译与 arm64 + arm64e 双架构构建通过，**含底部 tab 根上下文（`customTabBar`）
+的新修复**。该验证分支**没有可下载 artifact**，等 `main` 成功才发布。
+这仍只是**编译与机制**层面的证据：**编译与机制测试都不等于真机生效。**
+
+## 防崩
+
+1. **不交换 IMP**。用 `method_setImplementation` + 保存原 IMP 直调。
+   上一版用 `method_exchangeImplementations` 方向写反 → 无限递归 → `depth 12353`
+   打穿 Stack Guard 闪退。**这是已确认的历史崩溃根因**；它与日志目录解析无关。
+2. **返回类型闸门（只针对旧广告通用 no-op 安装器）**：那种 no-op 只保证 `x0` 有效，
+   返回结构体/浮点/复数的方法在这一层一律不碰。各精准组件用的是已核验的 typed 替换实现
+   （例如推广整排是 `double (*)(id, SEL)`），不受这条限制。
+3. **跳过生命周期方法（同上，只针对旧 no-op 层）**：`init` / `dealloc` / `copy` / `load` /
+   setter 等。精准组件会 hook 已核验过的 setter / getter（搜索词数据层、底部 tab 可见数组写入口），
+   不按这条跳过。
+4. **IMP 复用**：旧广告 no-op 层把 `imp_implementationWithBlock` 的结果缓存进一个
+   `BDNoopIMP` 全局复用，第一次创建之后不再为每个方法重复生成 trampoline。
+5. **按类下刀**：hook 表是「类 → selector」，不会把同名方法误伤到别的类。
+6. 保留网络层的 1.5 秒延迟：它不代表 app ready，也改不到**已经创建好的 session**；保留只是因为没有证据说它有害。
 
 ## 日志
 
-同时写 syslog 和沙盒 `Documents/BDNadBlock-dump.txt`（缓冲区从进程启动就在累积）。
+同时写 syslog 与沙盒 `Documents/BDNadBlock-dump.txt`（缓冲区从进程启动就在累积）。
 
 ```bash
-# 取文件
 find /var/mobile/Containers/Data/Application -name BDNadBlock-dump.txt
-
-# 或实时看
 log stream --predicate 'eventMessage CONTAINS "BDNadBlock"'
 ```
 
-期望输出：
+关键行（`installed` / `hit` 是两回事，`installed` 不代表功能生效）：
 
 ```
-[BDNadBlock] hooked +[NSURLSessionConfiguration defaultSessionConfiguration]
-[BDNadBlock] hooked +[NSURLSessionConfiguration ephemeralSessionConfiguration]
-[BDNadBlock] selftest: default=1 ephemeral=1 (want 1/1)
-[BDNadFeature] installed home-recommend: +[BHSettings isMSHSwitchTypeHomeRecommend] enc=B16@0:8
-[BDNadFeature] installed home-recommend-rows: -[BDPanNewMSHContentViewController tableView:numberOfRowsInSection:] enc=q32@0:8@16q24
-[BDNadFeature] installed game-center: +[BDPanPersonalConfig gameCenterSwitch] enc=B16@0:8
-[BDNadFeature] hit home-recommend（首次真正抑制）
-[BDNadBlock] hooked -[BDNCBUAdsSplashAD showAdWithViewController:] (returns 'v')
-[BDNadBlock] method hooks done, walked 11 classes
-[BDNadBlock] blocked[ad-banner] pan.baidu.com/buy/ad/get
+[BDNadBlock] loaded (purification-menu: ...)；active snapshot ...
+[BDNadBlock] active <key> = 0|1                     每个键的本进程启动快照
+[BDNadBlock] network layer on (hosts=.. paths=.. anypath=..)   或   network layer NOT installed (...)
+[BDNadFeature] installed <token>: -[Class sel] enc=...          装上了
+[BDNadFeature] hit <token>（首次真正抑制）                        真的抑制过一次（每 token 只一行）
+[BDNadFeature] skip <token>: ...                                 校验没过，什么都没装
+[BDNadSearch] / [BDNadTab] / [BDNadMenuEntry] skip ...           对应组件的跳过原因
+[BDNadBlock] blocked[tag] host/path                              网络层命中
+[BDNadMenuEntry] menu-open-request: 首次请求打开净化菜单          只表示「请求过打开」，不等于菜单已展示
 ```
 
-`[BDNadFeature] skip ...` 说明校验没过（类缺失 / 只有继承实现 / encoding 或参数个数
-不符）：**什么都没装**，不是崩了。首页那两条是成对的，skip pair 意味着两条都没装。
-`hit` 只在首次真正抑制时打一行，不是每帧。
-
-`跳过 -[类 selector] (returns '{...}')` 这种行说明返回类型闸门挡下了不安全的 hook，属正常。
+菜单「诊断」分组里可**分享诊断日志**：本组件**不自动上传**，目的地由用户在系统分享面板里选；
+不复制整份日志、不删除源文件。iPad 已设 popover 锚点；文件不存在或不可读时弹窗明确提示。
 
 ## 已知限制
 
-**拦不到**：
-
-1. **QUIC / Tquic**。`Tquic.framework` 直连 socket，不过 `NSURLProtocol`。
-2. **非标端口的裸 socket**。`jomoxc.com:9082`、`antpcdn.com:19001`、`yingt.asia:9549`。
-   （不过这些实测是静态资源镜像，本来也不该拦。）
-3. **延迟生效的 session**。1.5s 之前创建的 `NSURLSession` 不在拦截范围内。
-4. **服务端下发的开关**。`afdconf.baidu.com` 的 `nad_*` 是服务端数据，改二进制无效 —— 所以走网络层拦。
-5. **`h2tcbox.baidu.com/ztbox`（35 次/30s）** 没抓到响应体，定性不了，暂不处理。
-6. **推荐/游戏的其它入口**。这 3 个 hook 只挡「渲染 + 组装 + 已有解析/分页路径」；
-   共享 manager 的冷启动预取、socket / VoIP / remotePush 入口**没有被证明**被挡住，
-   所以不宣称「零请求」。游戏那条是**组装闸门**：只阻止新建区块，不负责删除已经显示的区块。
-7. **创意社区是否有本容器之外的独立入口**没验证；若有，第 2 条 hook 不影响它。
+1. **一切都要真机确认**：菜单入口可达性、每个开关对应的页面效果、留白/空位、网络层真实拦截率。
+2. **不保证所有相关请求都停止**：仅隐藏视图的规则下请求可能照旧发生；原生 gate 可能在
+   创建/请求之前就阻断；网络 matcher 命中的请求本来就不发出。哪种情况适用要看具体规则。
+3. 首页年卡促销（`BDRemoveHomePromo`）**本版未实施**，菜单里是说明行；
+   规格表里的默认 YES 只是保留配置，日志里的快照值也不是接线证据。
+4. 推荐/创意的 hook 只保证「渲染 + 组装 + 已有解析/分页路径」；共享 manager 的冷启动预取、
+   socket / VoIP / remotePush 入口没有被证明被挡住。游戏中心那条是组装闸门。
+5. 任务卡隐藏后**容量区域与 section 原行高都保留**（80.0 / 96.0 未动），只是任务卡原占位可能留白；
+   真机布局未验证。
+6. 底部 tab 的索引换算**需真机测试登录 / 退出 / 企业空间切换**等根视图切换场景。
+7. 网络层覆盖有限（抓包仍有未覆盖请求）；除「不改已创建 session」外，具体原因未确定。
+8. 展示方法层的超时与回调行为未验证。
+9. `h2tcbox.baidu.com/ztbox`（抓包 35 次/30s）没抓到响应体，定性不了，暂不处理；它属于未知流量，不是「广告请求未覆盖」。

@@ -1,0 +1,176 @@
+// tests/preferences_test.mm — Preferences.h 的 macOS host 测试
+//
+// 只用 isolated NSUserDefaults suite（唯一 UUID 名），不碰 standardUserDefaults，
+// 不写 App 真实域，不碰 plist 文件，不起 UIKit —— UI（菜单/开关/分享面板）
+// 只能在真机或模拟器上看，这里不伪造。
+//
+// 覆盖：规格表键唯一与默认值（续费默认 NO、诊断默认 NO）、旧版 NSString 值被尊重、
+// 不合适类型（容器/日期）退默认不崩、未知 key 读取 fail-closed 且写入被拒、desired 保存后
+// 同一 suite 的新 defaults 实例（**同进程可见性**，不等于已验证真实进程重启/落盘恢复）
+// 能读到、已建快照不随写入改变、下一次快照读到新值、总开关/诊断/独立选项可读。
+//
+// 构建运行（macOS，无需 IPA，无需 Theos）：
+//   clang++ -std=c++17 -fobjc-arc -fblocks -Wall -Wextra -Werror \
+//     -framework Foundation -o /tmp/preferences_test tests/preferences_test.mm
+//   /tmp/preferences_test
+
+#import <Foundation/Foundation.h>
+#include <stdio.h>
+
+#include "../Preferences.h"
+
+static int gFailures = 0;
+
+#define CHECK(cond)                                                        \
+    do {                                                                   \
+        if (!(cond)) {                                                     \
+            fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
+            gFailures++;                                                   \
+        }                                                                  \
+    } while (0)
+
+// 测试用期望键（固定清单，防止规格表被悄悄改键）。
+static NSString *const kExpectedKeys[] = {
+    @"BDNadBlockEnabled",
+    @"BDRemoveRecommend", @"BDRemoveHomePromo", @"BDRemoveAITab",
+    @"BDRemoveJobNovel", @"BDRemoveSearchPromo", @"BDRemoveSearchAI",
+    @"BDRemoveGameCenter", @"BDRemovePersonalPromotions",
+    @"BDRemovePersonalBanner", @"BDRemoveTaskCard", @"BDRemoveRenewButton",
+    @"BDNadBlockNetwork", @"BDNadBlockAdMethods",
+    @"BDNadBlockDumpOnly",
+};
+
+static void TestSpecTable(void) {
+    CHECK(BDNadPrefsSpecCount == sizeof(kExpectedKeys) / sizeof(kExpectedKeys[0]));
+    for (NSUInteger i = 0; i < BDNadPrefsSpecCount; i++) {
+        const BDNadPrefsSpec *s = &BDNadPrefsSpecs[i];
+        CHECK(s->key != NULL && s->key[0] != '\0');
+        CHECK(s->title != NULL && s->title[0] != '\0');
+        CHECK(s->group >= BDNadPrefsGroupMaster && s->group <= BDNadPrefsGroupDiagnostics);
+        // 键唯一：查表必须回到同一个下标。
+        CHECK([@(s->key) isEqualToString:kExpectedKeys[i]]);
+        const BDNadPrefsSpec *found = BDNadPrefsSpecForKey(kExpectedKeys[i]);
+        CHECK(found == s);
+    }
+    CHECK(BDNadPrefsSpecForKey(@"BDNadNotAKnownKey") == NULL);
+    CHECK(BDNadPrefsSpecForKey(nil) == NULL);
+    CHECK([BDNadPrefsGroupTitle(BDNadPrefsGroupMaster) isEqualToString:@"总开关"]);
+    CHECK([BDNadPrefsGroupTitle(BDNadPrefsGroupHome) isEqualToString:@"首页"]);
+    CHECK([BDNadPrefsGroupTitle(BDNadPrefsGroupPersonal) isEqualToString:@"我的"]);
+    CHECK([BDNadPrefsGroupTitle(BDNadPrefsGroupAds) isEqualToString:@"广告"]);
+    CHECK([BDNadPrefsGroupTitle(BDNadPrefsGroupDiagnostics) isEqualToString:@"诊断"]);
+}
+
+static void TestDefaults(void) {
+    CHECK(BDNadPrefsSpecForKey(@"BDNadBlockEnabled")->defaultValue == YES);
+    CHECK(BDNadPrefsSpecForKey(@"BDRemoveRenewButton")->defaultValue == NO);    // 续费按钮默认保留
+    CHECK(BDNadPrefsSpecForKey(@"BDNadBlockDumpOnly")->defaultValue == NO);     // 默认不做仅诊断
+    CHECK(BDNadPrefsSpecForKey(@"BDNadBlockAdMethods")->defaultValue == YES);
+    for (NSUInteger i = 0; i < BDNadPrefsSpecCount; i++) {
+        NSString *k = @(BDNadPrefsSpecs[i].key);
+        if ([k isEqualToString:@"BDRemoveRenewButton"] || [k isEqualToString:@"BDNadBlockDumpOnly"]) continue;
+        CHECK(BDNadPrefsSpecs[i].defaultValue == YES);
+    }
+}
+
+int main(void) {
+    @autoreleasepool {
+        TestSpecTable();
+        TestDefaults();
+
+        NSString *suiteName = [@"BDNadPreferencesTest-" stringByAppendingString:NSUUID.UUID.UUIDString];
+        NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:suiteName];
+        CHECK(d != nil);
+
+        // 空 suite = 全规格默认。
+        CHECK(BDNadPrefsDesired(d, @"BDNadBlockEnabled") == YES);
+        CHECK(BDNadPrefsDesired(d, @"BDRemoveRenewButton") == NO);
+        CHECK(BDNadPrefsDesired(d, @"BDNadBlockDumpOnly") == NO);
+        CHECK(BDNadPrefsDesired(d, @"BDRemoveSearchAI") == YES);
+        CHECK(BDNadPrefsDesired(nil, @"BDNadBlockEnabled") == YES);       // 冻结的 defaults 参数也不崩
+        CHECK(BDNadPrefsDesired(d, nil) == NO);                           // 未知/空 key fail-closed
+
+        // 旧版用户值（NSString）必须被尊重。
+        [d setObject:@"0" forKey:@"BDRemoveGameCenter"];
+        [d setObject:@"1" forKey:@"BDNadBlockNetwork"];
+        [d setObject:@"true" forKey:@"BDRemoveHomePromo"];
+        CHECK(BDNadPrefsDesired(d, @"BDRemoveGameCenter") == NO);
+        CHECK(BDNadPrefsDesired(d, @"BDNadBlockNetwork") == YES);
+        CHECK(BDNadPrefsDesired(d, @"BDRemoveHomePromo") == YES);
+
+        // 类型不合适：退规格默认，不崩（默认都是 YES，续费确实是 NO）。
+        // 数组/字典/Data 是合法 plist 值但非标量；NSDate 也是合法 plist 值但不是 bool。
+        [d setObject:@[@"x"] forKey:@"BDRemoveRecommend"];
+        [d setObject:@{@"x": @1} forKey:@"BDRemoveTaskCard"];
+        [d setObject:[NSData dataWithBytes:"ab" length:2] forKey:@"BDRemovePersonalBanner"];
+        [d setObject:[NSDate dateWithTimeIntervalSince1970:0] forKey:@"BDNadBlockEnabled"];
+        [d setObject:@[@1] forKey:@"BDRemoveRenewButton"];
+        CHECK(BDNadPrefsDesired(d, @"BDRemoveRecommend") == YES);
+        CHECK(BDNadPrefsDesired(d, @"BDRemoveTaskCard") == YES);
+        CHECK(BDNadPrefsDesired(d, @"BDRemovePersonalBanner") == YES);
+        CHECK(BDNadPrefsDesired(d, @"BDNadBlockEnabled") == YES);
+        CHECK(BDNadPrefsDesired(d, @"BDRemoveRenewButton") == NO);
+
+        // 未知 key：读取 fail-closed、写入拒绝（不留任何值）。
+        CHECK(BDNadPrefsDesired(d, @"BDNadUnknownKey") == NO);
+        CHECK(BDNadPrefsSetDesired(d, @"BDNadUnknownKey", YES) == NO);
+        CHECK([d objectForKey:@"BDNadUnknownKey"] == nil);
+        CHECK(BDNadPrefsSetDesired(d, nil, YES) == NO);
+        CHECK(BDNadPrefsSetDesired(nil, @"BDNadBlockEnabled", YES) == NO);   // 没有隐式 standard 域写入
+        // 不属于我们的键不允许写（不是“known key”）。
+        CHECK(BDNadPrefsSetDesired(d, @"BDPanSomeAppKey", YES) == NO);
+        CHECK([d objectForKey:@"BDPanSomeAppKey"] == nil);
+
+        // 写入 owned key 才成功。
+        CHECK(BDNadPrefsSetDesired(d, @"BDRemoveRenewButton", YES) == YES);
+        CHECK([d objectForKey:@"BDRemoveRenewButton"] != nil);
+        CHECK(BDNadPrefsDesired(d, @"BDRemoveRenewButton") == YES);
+        CHECK(BDNadPrefsSetDesired(d, @"BDNadBlockEnabled", NO) == YES);
+        CHECK(BDNadPrefsSetDesired(d, @"BDNadBlockDumpOnly", YES) == YES);
+        CHECK(BDNadPrefsDesired(d, @"BDNadBlockEnabled") == NO);
+        CHECK(BDNadPrefsDesired(d, @"BDNadBlockDumpOnly") == YES);
+
+        // 快照：先建一份，再改值，旧快照不变。
+        NSDictionary<NSString *, NSNumber *> *before = BDNadPrefsSnapshot(d);
+        CHECK([before isKindOfClass:[NSDictionary class]]);
+        CHECK(before.count == BDNadPrefsSpecCount);
+        CHECK(before[@"BDNadBlockEnabled"].boolValue == NO);
+        CHECK(before[@"BDRemoveRenewButton"].boolValue == YES);
+        CHECK(BDNadPrefsSetDesired(d, @"BDNadBlockEnabled", YES) == YES);
+        CHECK(BDNadPrefsSetDesired(d, @"BDRemoveRenewButton", NO) == YES);
+        CHECK(before[@"BDNadBlockEnabled"].boolValue == NO);              // 旧快照是 immutable 的
+        CHECK(before[@"BDRemoveRenewButton"].boolValue == YES);
+
+        // 下一次构造快照（= 模拟“下一次冷启动”时 active 会读到什么）读到的才是新值。
+        NSDictionary<NSString *, NSNumber *> *after = BDNadPrefsSnapshot(d);
+        CHECK(after[@"BDNadBlockEnabled"].boolValue == YES);
+        CHECK(after[@"BDRemoveRenewButton"].boolValue == NO);
+
+        // 同一 suite 的新 defaults 实例在本进程内就能看到已保存值。
+        // 这只证明 suite 的内存可见性，不代表已验证真实进程重启/落盘恢复（真机待测）。
+        NSUserDefaults *reopened = [[NSUserDefaults alloc] initWithSuiteName:suiteName];
+        CHECK(BDNadPrefsDesired(reopened, @"BDNadBlockEnabled") == YES);
+        CHECK(BDNadPrefsDesired(reopened, @"BDRemoveRenewButton") == NO);
+        CHECK(BDNadPrefsDesired(reopened, @"BDNadBlockDumpOnly") == YES);
+        CHECK(BDNadPrefsSnapshot(reopened)[@"BDNadBlockDumpOnly"].boolValue == YES);
+
+        // 独立选项 + 广告层键都可读（不该被总开关污染）。
+        CHECK(BDNadPrefsDesired(reopened, @"BDRemoveJobNovel") == YES);
+        CHECK(BDNadPrefsDesired(reopened, @"BDRemoveSearchPromo") == YES);
+        CHECK(BDNadPrefsDesired(reopened, @"BDRemovePersonalPromotions") == YES);
+        CHECK(BDNadPrefsDesired(reopened, @"BDNadBlockAdMethods") == YES);
+        CHECK(BDNadPrefsDesired(reopened, @"BDRemoveAITab") == YES);
+
+        // 清理：只删本次测试 owned 的 suite，不碰真实域。
+        [d removePersistentDomainForName:suiteName];
+        CHECK(BDNadPrefsDesired(d, @"BDNadBlockDumpOnly") == NO);   // 删完回到规格默认（证明域确实被清）
+        CHECK(BDNadPrefsDesired(d, @"BDNadBlockEnabled") == YES);
+    }
+
+    if (gFailures == 0) {
+        printf("preferences_test: all checks passed\n");
+        return 0;
+    }
+    fprintf(stderr, "preferences_test: %d check(s) failed\n", gFailures);
+    return 1;
+}

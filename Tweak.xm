@@ -34,17 +34,21 @@
 //   startAdvertiseFetchTimer）。显示层 no-op 的回调与超时行为仍需真机验证。
 //   元数据确认返回 v(void) 或 B(BOOL)，这不证明业务状态与布局安全。
 //
-// 精准 feature hook（3 个，实现见 FeatureRemoval.h，构造器里同步安装）：
+// 精准 feature hook（FeatureRemoval.h 是 4 个核心 hook，构造器里同步安装；
+// 另有 TabRemoval / PersonalRemoval / PersonalViewRemoval / RenewButtonRemoval /
+// SearchData / SearchView / MenuEntry 各自带自己的开关与安装入口，别数总数）：
 //   首页「推荐/创意」整块 = +[BHSettings isMSHSwitchTypeHomeRecommend] 与
 //   -[BDPanNewMSHContentViewController tableView:numberOfRowsInSection:] 一对；
-//   我的页游戏中心 = +[BDPanPersonalConfig gameCenterSwitch]。
+//   我的页游戏中心 = +[BDPanPersonalConfig gameCenterSwitch]；
+//   首页金刚区求职/小说 = +[BDPanFeedHomeConfig cacheKingKongsConfigArray] 过滤最终数组。
 //   先存原 IMP 再换，调用时按开关透传；签名不符/方法不在本类自己的表里就 skip。
 //
 // 防崩：
 //   - 不交换 IMP，用 method_setImplementation + 保存原 IMP 直调（交换写反 = 无限递归，
 //     上一版就是栽在这里：depth 12353 打穿 Stack Guard）
-//   - 返回结构体/浮点的方法一律不碰（no-op 只保证 x0 有效，s0/x1 是垃圾）
-//   - 跳过 init/dealloc/copy/load/setter 等生命周期方法
+//   - 返回类型闸门与生命周期方法闸门**只针对旧广告的通用 no-op 安装器**：
+//     那种 no-op 只保证 x0 有效，返回结构体/浮点/复数的方法一律不碰，也跳过
+//     init/dealloc/copy/load/setter。各精准组件用已核验的 typed 替换实现，不受这两条限制。
 //   - 网络 hook 目前延迟 1.5 秒；定时器不代表 app ready，已有 session 也不会被改写
 //
 // 日志：syslog + 沙盒 Documents/BDNadBlock-dump.txt（可取出）
@@ -54,13 +58,14 @@
 #import <objc/runtime.h>
 #import <string.h>
 #import <stdarg.h>
+#import "Preferences.h"   // 唯一默认值来源 + 启动快照读原语（不在这里抄默认值）
 
 #pragma mark - 日志
 
 static NSMutableString *BDLogBuffer;
 static NSString *BDLogPath;
 static dispatch_queue_t BDLogQueue;
-static BOOL BDLogFileEnabled = NO;   // app ready 之后才开
+static BOOL BDLogFileEnabled = NO;   // 延迟启动阶段（BDLogPathReport）才开，不在构造器里解析路径
 
 static NSString *BDResolveLogPath(void) {
     NSString *docs = NSSearchPathForDirectoriesInDomains(
@@ -78,7 +83,8 @@ static void BDLog(NSString *fmt, ...) {
     NSLog(@"%@", msg);
 
     // 只建缓冲区和队列。**不在这里解析沙盒路径**：BDLog 会在构造器阶段
-    // （dyld 镜像初始化）就被调用，那时碰 Foundation 的目录服务是自找麻烦。
+    // （dyld 镜像初始化）就被调用；目录解析沿用延迟启动阶段（BDLogPathReport）。
+    // 未证明它是历史崩溃原因 —— 已有的崩溃根因是 IMP 交换递归，不是目录服务。
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         BDLogBuffer = [NSMutableString string];
@@ -105,100 +111,57 @@ static void BDLogPathReport(void) {
     });
 }
 
-#pragma mark - 开关
+#pragma mark - 开关（读启动快照，不是读实时 defaults）
 
-static BOOL BDDefault(NSString *key, BOOL fallback) {
-    id v = [[NSUserDefaults standardUserDefaults] objectForKey:key];
-    return v ? [v boolValue] : fallback;
+// 语义（与 Preferences.h 议定）：BDNadPrefsActive 读本进程启动时建的唯一快照，
+// 默认值只在 Preferences.h 的规格表里有一份，这里一律用原键、不再抄默认值。
+// 于是：设置菜单改开关 = 只影响**下次冷启动**，不热改当前进程、不重启 App；
+// 进程起来之后这里的返回值不再变化，所以"启动期判一次"的写法（BDSetupNetwork）是安全的。
+static BOOL BDEnabled(void)           { return BDNadPrefsActive(@"BDNadBlockEnabled"); }
+static BOOL BDDumpOnly(void)          { return BDNadPrefsActive(@"BDNadBlockDumpOnly"); }
+static BOOL BDRemoveRecommend(void)   { return BDNadPrefsActive(@"BDRemoveRecommend"); }
+static BOOL BDRemoveGameCenter(void)  { return BDNadPrefsActive(@"BDRemoveGameCenter"); }
+static BOOL BDRemoveJobNovel(void)    { return BDNadPrefsActive(@"BDRemoveJobNovel"); }
+static BOOL BDRemoveSearchPromo(void) { return BDNadPrefsActive(@"BDRemoveSearchPromo"); }
+static BOOL BDRemoveSearchAI(void)    { return BDNadPrefsActive(@"BDRemoveSearchAI"); }
+static BOOL BDRemoveAITab(void)       { return BDNadPrefsActive(@"BDRemoveAITab"); }
+static BOOL BDRemovePersonalBanner(void) { return BDNadPrefsActive(@"BDRemovePersonalBanner"); }
+static BOOL BDRemoveRenewButton(void)   { return BDNadPrefsActive(@"BDRemoveRenewButton"); }
+static BOOL BDRemovePersonalPromotions(void) { return BDNadPrefsActive(@"BDRemovePersonalPromotions"); }
+static BOOL BDRemoveTaskCard(void)      { return BDNadPrefsActive(@"BDRemoveTaskCard"); }
+
+// 网络拦截总门：总开关 + 诊断 + 网络开关的组合，任一不满足就整层不拦。
+// matcher 最前查一次即可，不需要在里面重复判断总开关。
+static BOOL BDBlockNetwork(void) {
+    return BDEnabled() && !BDDumpOnly() && BDNadPrefsActive(@"BDNadBlockNetwork");
 }
 
-static BOOL BDEnabled(void)       { return BDDefault(@"BDNadBlockEnabled", YES); }
-static BOOL BDDumpOnly(void)      { return BDDefault(@"BDNadBlockDumpOnly", NO); }
-static BOOL BDBlockNetwork(void)  { return BDDefault(@"BDNadBlockNetwork", YES); }
-static BOOL BDRemoveRecommend(void)  { return BDDefault(@"BDRemoveRecommend", YES); }
-static BOOL BDRemoveGameCenter(void) { return BDDefault(@"BDRemoveGameCenter", YES); }
-
-// 精准 feature hook（3 个：首页推荐/创意整块 + 我的页游戏中心）。
-// 放在开关之后 include：它依赖上面的 BDLog / BDEnabled / BDDumpOnly / BDRemove*。
+// 组件 include 顺序（依赖是单向的，别调换）：
+//   FeatureRemoval.h  提供 BDFRSpec / BDFRResolve / BDFRInstallSpec / BDFRSuppressed
+//   TabRemoval.h      底部 AI tab 过滤 + 索引映射（复用 FeatureRemoval 的安装器）
+//   PersonalRemoval.h「我的」活动轮播 + 推广整排（同样复用安装器；后续 promo 往这里追加）
+//   PersonalViewRemoval.h「我的」任务卡 / 金币卡（布局 post-hook + 只读 getter 依赖）
+//   RenewButtonRemoval.h「去续费」按钮可隐藏（不 import UIKit，靠调用方先引入的 UIKit）
+//   SettingsMenu.h    提供 BDPresentPurificationSettings（MenuEntry 的依赖）
+//   SearchDataRemoval.h / SearchViewRemoval.h  搜索框数据层与 UI 层清理
+//   MenuEntry.h       设置页入口按钮，依赖上面的菜单入口 + FeatureRemoval 的安装器
+// 全部只读同一份 active 快照，不各写各的默认值。
 #include "FeatureRemoval.h"
+#include "TabRemoval.h"
+#include "PersonalRemoval.h"
+#include "PersonalViewRemoval.h"
+#include "RenewButtonRemoval.h"
+#include "SettingsMenu.h"
+#include "SearchDataRemoval.h"
+#include "SearchViewRemoval.h"
+#include "MenuEntry.h"
 
-#pragma mark - 网络拦截规则（全部经抓包响应体证实）
+#pragma mark - 网络拦截规则
 
-// 整个 host 都是广告链路
-static const char *BDHostRules[] = {
-    // 趣盟广告 SDK
-    "cpc-service-square.yunxish.com",
-    "cpc-service-square.iggrowth.cn",
-    "logrcv.yunxish.com",
-    "show-api.yunxish.com",
-    "usr-api.yunxish.com",
-    "service.yunxish.com",
-    "tracelog-debug.yunxish.com",
-    // 百度自有：广告开关 / 点击归因 / 营销云
-    "afdconf.baidu.com",
-    "nsclick.baidu.com",
-    "sofire.baidu.com",
-    "huiduapi.nuomi.com",
-    // 第三方联盟
-    "ef-dongfeng.tanx.com",
-    "tnc3-alisc1.zijieapi.com",
-    "mssdk.volces.com",
-    // 当贝 / 酷开 广告 SDK（logu.hpplay.cn:8856 的 host 相同，一条覆盖）
-    "conf.hpplay.cn",
-    "vfa.hpplay.cn",
-    "ssdkauth.hpplay.cn",
-    "logu.hpplay.cn",
-};
-
-// host + 路径前缀
-typedef struct { const char *host; const char *path; const char *tag; } BDPathRule;
-static const BDPathRule BDPathRules[] = {
-    // 首页 banner 广告。响应实测：adList[0].title="双十一上淘宝"，
-    // actionUrl=https://ulk.alimama.com/tb?...（淘宝联盟）
-    {"pan.baidu.com", "/buy/ad/",          "ad-banner"},
-    // 激励任务广告。响应实测：scene_list[].task_list[].complete_notice
-    // ="恭喜获得1次音频倍速播放机会"
-    {"pan.baidu.com", "/rest/2.0/pcs/adv", "ad-task"},
-};
-
-// 只看路径、不看 host：这批素材会走 P2P 加速镜像，
-// host 每台设备都不一样（antpcdn.com:19001 / jomoxc.com:9082 / yingt.asia:9549），
-// 拦 host 会连静态资源一起打死，所以只能按路径判。
-static const char *BDAnyPathRules[] = {
-    "/gamecenter/",    // ndstatic.cdn.bcebos.com 的 gameCenter 目录
-    "_swan-game_",     // spcsz.cdn.bcebos.com 的 cmpkg 里的 swan 游戏包
-    // 注意不要拦 cmpkg 整目录或 1_swan-core —— 那是小程序运行时
-};
-
-static NSString *BDMatchNetwork(NSString *host, NSString *path) {
-    if (!host.length || !BDBlockNetwork()) return nil;
-    host = host.lowercaseString;
-    NSString *lp = path.lowercaseString ?: @"";
-
-    for (unsigned i = 0; i < sizeof(BDHostRules)/sizeof(BDHostRules[0]); i++)
-        if ([host isEqualToString:@(BDHostRules[i])]) return @"ad-host";
-
-    for (unsigned i = 0; i < sizeof(BDPathRules)/sizeof(BDPathRules[0]); i++)
-        if ([host isEqualToString:@(BDPathRules[i].host)] &&
-            [lp hasPrefix:@(BDPathRules[i].path)])
-            return @(BDPathRules[i].tag);
-
-    if ([host isEqualToString:@"pan.baidu.com"] &&
-        [lp hasPrefix:@"/act/v2/gamecenter"])
-        return BDRemoveGameCenter() ? @"game-center-api" : nil;
-
-    if (BDRemoveGameCenter())
-        for (unsigned i = 0; i < sizeof(BDAnyPathRules)/sizeof(BDAnyPathRules[0]); i++)
-            if ([lp containsString:@(BDAnyPathRules[i])]) return @"game-center-asset";
-
-    // 搜索框底部推荐词（实测返回 6 条 show_query）+ 记忆中心推荐卡片
-    if (BDRemoveRecommend() && [host isEqualToString:@"pan.baidu.com"] &&
-        ([lp hasPrefix:@"/recommend/"] ||
-         [lp hasPrefix:@"/aisearch/agent/memorycenter/getrecommendcards"]))
-        return @"recommend-api";
-
-    return nil;
-}
+// 规则表与 matcher 全在 Foundation-only 的 NetworkRules.h 里：同一份实现也被
+// tests/network_rules_test.mm include，跑的是真实 matcher，不在测试里抄算法。
+// 上面那批开关是它的依赖，所以必须放在本 include 之前。
+#include "NetworkRules.h"
 
 #pragma mark - NSURLProtocol
 
@@ -265,6 +228,17 @@ static id BDEphemeralCfgHooked(id self, SEL _cmd) {
 static void BDSetupNetwork(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
+        // 网络拦截总门不通过（总开关关 / 诊断开 / 网络开关关）：整层不进进程 ——
+        // 不换 NSURLSessionConfiguration 工厂、不注册 NSURLProtocol，连拦截实现都不挂上。
+        // 这里读的 active 快照在进程启动后就固定了，所以判一次即可（不热改当前会话）。
+        // 日志打三个**原始快照值**，不要把复合返回值当成网络键的值来读。
+        if (!BDBlockNetwork()) {
+            BDLog(@"[BDNadBlock] network layer NOT installed "
+                   "(master=%d dumpOnly=%d networkKey=%d)：未换工厂、未注册 NSURLProtocol",
+                  BDEnabled(), BDDumpOnly(), BDNadPrefsActive(@"BDNadBlockNetwork"));
+            return;
+        }
+
         // 保留旧版 1.5 秒延迟。已确认的崩溃根因是递归；
         // 崩溃栈本身不能证明 Foundation 未初始化，也不能证明延迟能防崩。
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
@@ -426,8 +400,19 @@ static void BDWalkMethods(Class cls, NSString *clsName, NSArray *wanted) {
 
 static void BDBoot(void) {
     BDLogPathReport();
-    BDLog(@"[BDNadBlock] switches enabled=%d dumpOnly=%d network=%d recommend=%d gameCenter=%d",
-          BDEnabled(), BDDumpOnly(), BDBlockNetwork(), BDRemoveRecommend(), BDRemoveGameCenter());
+    // 这里打印的是**本进程启动快照**（active），不是 defaults 里的当前值：
+    // 设置菜单改开关只影响下次冷启动，本进程不会变。
+    BDLog(@"[BDNadBlock] active snapshot (启动快照，菜单改动只影响下次冷启动): "
+           "master=%d dumpOnly=%d network=%d adMethods=%d recommend=%d searchPromo=%d gameCenter=%d",
+          BDEnabled(), BDDumpOnly(), BDBlockNetwork(), BDNadPrefsActive(@"BDNadBlockAdMethods"),
+          BDRemoveRecommend(), BDRemoveSearchPromo(), BDRemoveGameCenter());
+    // 规格表里每个键的启动快照值：默认值只从 Preferences.h 的表里取，这里不重抄；
+    // 只打本组件的 fixed key，不碰账号/缓存/其它偏好。
+    for (NSUInteger i = 0; i < BDNadPrefsSpecCount; i++)
+        BDLog(@"[BDNadBlock] active %s = %d", BDNadPrefsSpecs[i].key,
+              BDNadPrefsActive(@(BDNadPrefsSpecs[i].key)));
+    BDLog(@"[BDNadBlock] 下面各组件的 installed / hit 只表示本进程装上并命中过，"
+           "不等于真机效果已验证（效果要看抓包与页面）");
     NSDictionary *map = BDHookMap();
     unsigned dumped = 0, missing = 0;
 
@@ -439,8 +424,11 @@ static void BDBoot(void) {
     }
     BDLog(@"[BDNadBlock] dumped %u classes, %u missing", dumped, missing);
 
-    if (BDDumpOnly() || !BDEnabled()) {
-        BDLog(@"[BDNadBlock] dump-only, no method hooks applied");
+    // 这个早退只管旧 18 个广告 selector；精准 feature hook（Recommend/GameCenter）
+    // 和网络层各自判断，不受这里影响。
+    if (!BDEnabled() || BDDumpOnly() || !BDNadPrefsActive(@"BDNadBlockAdMethods")) {
+        BDLog(@"[BDNadBlock] ad-method hooks skipped (master=%d dumpOnly=%d adMethods=%d)",
+              BDEnabled(), BDDumpOnly(), BDNadPrefsActive(@"BDNadBlockAdMethods"));
         return;
     }
 
@@ -456,10 +444,21 @@ static void BDBoot(void) {
 
 __attribute__((constructor))
 static void BDNadBlockInit(void) {
-    BDLog(@"[BDNadBlock] loaded (network + recommend/game-center removal)");
-    // 精准 feature hook 在这里同步装完（不走下面的 1.5s / 3s 定时器）。
+    // 第一件事：同步建启动快照（dispatch_once）。之后所有 active 读取都走它，
+    // 所以后面 BDFRInstallAll / BDSetupNetwork 看到的开关值与日志一致。
+    BDNadPrefsInit();
+    BDLog(@"[BDNadBlock] loaded (purification-menu: feature hooks + search + menu entry + network); "
+           "启动快照已建立，菜单改动只影响下次冷启动");
+    // 精准 feature hook 与搜索/入口 hook 都在这里同步装完（不走下面的 1.5s / 3s 定时器）。
     // 只有冷启动、且这里发生在页面组装之前才生效；真机以 [BDNadFeature] installed 日志为准。
     BDFRInstallAll();
+    BDPRInstallData();   // 「我的」活动轮播 + 推广整排（bannerSwitch -> NO，钱包行高折叠）
+    BDPVInstallAll();    // 「我的」任务卡：两条 -layoutViews post-hook（先布局后隐藏，installer 不做 UI 操作）
+    BDRBInstallAll();    // 「去续费」按钮：三条 -vipButton 各自独立安装（默认保留该按钮）
+    BDTRInstallAll();     // 底部「库库AI」tab：过滤可见数组，并按构造期/当前根上下文换算四个索引（整组校验）
+    BDSRInstallData();   // -[BDPanSearchManager setStaticWordList:] 清搜索框轮播词
+    BDSRInstallView();    // BDPanNewMSHSearchView 三条 post-hook（整组校验，不过就三条都不装）
+    BDMEInstallAll();     // 设置页导航条「网盘净化」按钮：入口照装，不受总开关/诊断影响
     BDSetupNetwork();
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ BDBoot(); });
