@@ -179,8 +179,10 @@ host 测试、UIKit `-fsyntax-only` 编译、再用 Theos 出 dylib；只有 `ma
 **已发布基线**是 `main` 的 `7e4d8e92`：**10 组 Foundation 机制测试（含传输页真值表矩阵）、UIKit strict
 syntax 与 arm64 / arm64e 双架构构建均已通过**（CI run `38888673604`）——
 那一版只含一刻相册 + 下载小游戏引导两项，**不含免流办卡开关**。
-本次免流办卡补丁（新增 `BDRemoveTransferCardPromo` 与它的 widget gate）**尚待最终 CI 与真机验证**：
-这里不预告结果、不写下载链接，验证分支也没有可下载 artifact，等 `main` 成功才发布。
+免流办卡补丁（新增 `BDRemoveTransferCardPromo` 与它的 widget gate）在提交 `1e869d5` 的
+[CI 38890609380](https://github.com/fucknima/BDNadBlock/actions/runs/38890609380) 中已通过
+10 组机制测试（含 48 组 bool 与 64 组办卡数值组合）、UIKit 严格编译及双架构构建。
+验证分支没有可下载 artifact，等 `main` 成功才发布；**真机办卡条效果仍未验证**。
 这些都只是**编译与机制**层面的证据：**真机效果未验，编译与机制测试都不等于真机生效。**
 
 ## 防崩
