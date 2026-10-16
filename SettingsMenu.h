@@ -86,7 +86,7 @@ NS_ASSUME_NONNULL_BEGIN
     return (NSInteger)n;
 }
 
-- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+- (NSString * _Nullable)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     (void)tableView;
     return BDNadPrefsGroupTitle((BDNadPrefsGroup)section);
 }
