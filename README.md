@@ -232,11 +232,13 @@ UIKit strict syntax 与 arm64 / arm64e 双架构构建；此前 `7e4d8e92`（run
 [CI 38905984074](https://github.com/fucknima/BDNadBlock/actions/runs/38905984074)：11组host机制测试、
 真实UIKit严格编译及arm64 / arm64e双架构构建。验证分支没有可下载artifact，等 `main` 成功才发布；
 **该实验的真机效果仍未验证**。
-**最近一次历史基线**是 `main` 的 `b6a2c42`（CI run `38906342452`）：11 组 host 机制测试、
+**顶部实验历史发布基线**是 `main` 的 `b6a2c42`（CI run `38906342452`）：11 组 host 机制测试、
 真实 UIKit 严格编译与 arm64 / arm64e 双架构构建全部通过。
 **开屏闸门扩到 0/2/3** 的代码提交 `3989739` 的验证 CI `38916406687` 已通过；
 已合入 `main 77d0621`，发布 [CI 38916663734](https://github.com/fucknima/BDNadBlock/actions/runs/38916663734) 通过。
-菜单删除提交 `97481d2` 已通过 [CI 38924448154](https://github.com/fucknima/BDNadBlock/actions/runs/38924448154)；本轮新增推广尚待完整 CI，不能沿用菜单基线冒充验证，仅 `main` 发布 CI 成功后提供新下载；
+菜单删除提交 `97481d2` 已通过 [CI 38924448154](https://github.com/fucknima/BDNadBlock/actions/runs/38924448154)。
+本轮完整推广代码 `5bb57b9` 已通过 [CI 38939593185](https://github.com/fucknima/BDNadBlock/actions/runs/38939593185)：
+11组机制测试（含运营位24组合、流量包16组合、试用身份/依赖/非主线程与App Open 144组合回归）、真实UIKit严格编译及arm64/arm64e构建；验证分支未上传产物，仅 `main` 发布 CI 成功后提供新下载。
 `BDExperimentHideHomeBanner` 仍默认关闭，既有净化项一个都没有删除。
 这些都只是**编译与机制**层面的证据：**真机效果未验，编译与机制测试都不等于真机生效。**
 
