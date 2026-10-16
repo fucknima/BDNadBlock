@@ -17,8 +17,8 @@
 - 这些 header 都是单 TU header（内部 `static`），`Tweak.xm` 里各 include 一次即可。
 - 当前 `Tweak.xm` 的实际 include 顺序（依赖单向，别调换）：
   `Preferences.h` → `FeatureRemoval.h` → `TabRemoval.h` → `PersonalRemoval.h` →
-  `PersonalViewRemoval.h` → `RenewButtonRemoval.h` → **`SettingsMenu.h`** →
-  `SearchDataRemoval.h` → `SearchViewRemoval.h` → **`MenuEntry.h`** → `NetworkRules.h`。
+  `PersonalViewRemoval.h` → `RenewButtonRemoval.h` → `TransferPromoRemoval.h` → **`SettingsMenu.h`** →
+  `SearchDataRemoval.h` → `SearchViewRemoval.h` → **`MenuEntry.h`** → `ResumeSplashRemoval.h` → `NetworkRules.h`。
 - 不要新增 `FILES`/`Frameworks`：`UIKit` 已在 `Makefile`，这些 header 不算编译单元。
 
 ## 2. 唯一选项清单（默认值只在 `Preferences.h` 规格表里写一份）
@@ -39,6 +39,8 @@
 | `BDRemoveRenewButton` | 隐藏续费按钮 | **NO** | 我的 |
 | `BDNadBlockNetwork` | 广告网络拦截·旧规则 | YES | 广告 |
 | `BDNadBlockAdMethods` | 广告展示拦截·实验 | YES | 广告 |
+| `BDRemoveTransferYikePromo` | 隐藏传输页一刻相册 | YES | 广告 |
+| `BDRemoveTransferGamePromo` | 隐藏下载小游戏引导 | YES | 广告 |
 | `BDNadBlockDumpOnly` | 仅诊断，不执行净化 | **NO** | 诊断 |
 
 开关 **ON = 去除/拦截**。`BDNadBlockEnabled` / `BDNadBlockNetwork` /
@@ -47,9 +49,12 @@
 
 `BDRemoveHomePromo`（首页年卡促销）**功能本版未实施**：静态定位未收束，用户选择先做其它项。
 菜单里那一行只呈现副标题「待定位，本版本暂时保留」，没有 `UISwitch`、不读也不写该键的
-saved 值 —— 免得显示成「默认 YES 已生效」。规格表里的 15 个键与默认值原样保留，
+saved 值 —— 免得显示成「默认 YES 已生效」。规格表现有 17 个键，旧 15 个键与默认值不变，
 其中这一个的默认 YES **只是保留配置**；启动日志里 `active BDRemoveHomePromo = 1`
 也只是快照值，**不是该功能已接线的证据**。等定位收束后再接上真实开关。
+
+传输页新增两项各自独立，均受总开关与非诊断条件控制，不依赖 `BDNadBlockAdMethods`。
+截图底部免流办卡条尚未定位，本版不提供未接线的办卡开关；企业版一刻相册未纳入本版。
 
 ## 3. 函数名（主会话按这些接线）
 
@@ -114,7 +119,7 @@ present 之前还有主线程/modal 守卫，守卫拒绝时菜单不会出现�
 ## 5. 不做的事（设计要求，别在接线时加回来）
 
 - 不写 `BHSettings` 原生开关、不删 unknown 键、不修改账号/缓存/原生偏好。
-  唯一写入面就是 App 的 `NSUserDefaults` 里本组件那 15 个固定键。
+  唯一写入面就是 App 的 `NSUserDefaults` 里本组件规格表内的固定键。
 - 不 `synchronize`、不直接改 plist 文件、不新增配置服务类/依赖。
 - 不热更新（改完不 reload 网盘的列表/导航）、不自动杀 App、不加延时/锁/重试。
 - 不新增日志系统、不复制整份日志、不自动上传（分享目的地由用户自己选）、不收集账号信息。
