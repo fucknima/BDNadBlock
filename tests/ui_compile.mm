@@ -37,6 +37,7 @@ static BOOL BDRemoveSearchPromo(void) { return BDNadPrefsActive(@"BDRemoveSearch
 static BOOL BDRemoveSearchAI(void)    { return BDNadPrefsActive(@"BDRemoveSearchAI"); }
 static BOOL BDRemoveAITab(void)       { return BDNadPrefsActive(@"BDRemoveAITab"); }
 static BOOL BDRemovePersonalBanner(void) { return BDNadPrefsActive(@"BDRemovePersonalBanner"); }
+static BOOL BDRemoveRenewButton(void)   { return BDNadPrefsActive(@"BDRemoveRenewButton"); }
 
 #pragma mark - 产品 header（顺序就是它们之间的单向依赖，别调换）
 
@@ -44,12 +45,14 @@ static BOOL BDRemovePersonalBanner(void) { return BDNadPrefsActive(@"BDRemovePer
 // FeatureRemoval.h 提供 BDFRSpec / BDFRResolve / BDFRInstallSpec（下面几个组件的安装器）
 // TabRemoval.h     底部 AI tab 过滤（复用安装器）
 // PersonalRemoval.h「我的」活动轮播 gate（复用安装器）
+// RenewButtonRemoval.h「去续费」按钮可隐藏（不 import UIKit，用本文件顶部的真实 UIKit 声明）
 // SearchDataRemoval.h / SearchViewRemoval.h 搜索框数据层与 UI 层（必须在 FeatureRemoval.h 之后）
 // MenuEntry.h      设置页入口按钮（需要菜单入口 + 安装器）
 #include "SettingsMenu.h"
 #include "FeatureRemoval.h"
 #include "TabRemoval.h"
 #include "PersonalRemoval.h"
+#include "RenewButtonRemoval.h"
 #include "SearchDataRemoval.h"
 #include "SearchViewRemoval.h"
 #include "MenuEntry.h"
@@ -61,6 +64,7 @@ static BOOL BDRemovePersonalBanner(void) { return BDNadPrefsActive(@"BDRemovePer
 void BDNadUICompileCheck(UIViewController *host, NSURL *logURL) {
     BDFRInstallAll();                        // 首页推荐/游戏中心/金刚区求职小说
     BDPRInstallData();                       // 「我的」活动轮播 gate
+    BDRBInstallAll();                        // 「去续费」按钮三条 vipButton
     BDTRInstallAll();                        // 底部「库库AI」tab 过滤 + 索引换算
     BDSRInstallData();                       // 搜索框轮播词数据层
     BDSRInstallView();                       // 搜索框 UI 层三条 post-hook（整组校验）

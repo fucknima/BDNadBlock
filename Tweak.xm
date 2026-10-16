@@ -122,6 +122,7 @@ static BOOL BDRemoveSearchPromo(void) { return BDNadPrefsActive(@"BDRemoveSearch
 static BOOL BDRemoveSearchAI(void)    { return BDNadPrefsActive(@"BDRemoveSearchAI"); }
 static BOOL BDRemoveAITab(void)       { return BDNadPrefsActive(@"BDRemoveAITab"); }
 static BOOL BDRemovePersonalBanner(void) { return BDNadPrefsActive(@"BDRemovePersonalBanner"); }
+static BOOL BDRemoveRenewButton(void)   { return BDNadPrefsActive(@"BDRemoveRenewButton"); }
 
 // 网络拦截总门：总开关 + 诊断 + 网络开关的组合，任一不满足就整层不拦。
 // matcher 最前查一次即可，不需要在里面重复判断总开关。
@@ -133,6 +134,7 @@ static BOOL BDBlockNetwork(void) {
 //   FeatureRemoval.h  提供 BDFRSpec / BDFRResolve / BDFRInstallSpec / BDFRSuppressed
 //   TabRemoval.h      底部 AI tab 过滤 + 索引映射（复用 FeatureRemoval 的安装器）
 //   PersonalRemoval.h「我的」活动轮播 gate（同样复用安装器；后续 promo 往这里追加）
+//   RenewButtonRemoval.h「去续费」按钮可隐藏（不 import UIKit，靠调用方先引入的 UIKit）
 //   SettingsMenu.h    提供 BDPresentPurificationSettings（MenuEntry 的依赖）
 //   SearchDataRemoval.h / SearchViewRemoval.h  搜索框数据层与 UI 层清理
 //   MenuEntry.h       设置页入口按钮，依赖上面的菜单入口 + FeatureRemoval 的安装器
@@ -140,6 +142,7 @@ static BOOL BDBlockNetwork(void) {
 #include "FeatureRemoval.h"
 #include "TabRemoval.h"
 #include "PersonalRemoval.h"
+#include "RenewButtonRemoval.h"
 #include "SettingsMenu.h"
 #include "SearchDataRemoval.h"
 #include "SearchViewRemoval.h"
@@ -442,6 +445,7 @@ static void BDNadBlockInit(void) {
     // 只有冷启动、且这里发生在页面组装之前才生效；真机以 [BDNadFeature] installed 日志为准。
     BDFRInstallAll();
     BDPRInstallData();   // 「我的」活动轮播：+[BDPanPersonalConfig bannerSwitch] -> NO
+    BDRBInstallAll();    // 「去续费」按钮：三条 -vipButton 各自独立安装（默认保留该按钮）
     BDTRInstallAll();     // 底部「库库AI」tab：过滤可见数组 + 四个索引 getter 换算（整组校验）
     BDSRInstallData();   // -[BDPanSearchManager setStaticWordList:] 清搜索框轮播词
     BDSRInstallView();    // BDPanNewMSHSearchView 三条 post-hook（整组校验，不过就三条都不装）

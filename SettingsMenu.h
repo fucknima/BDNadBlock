@@ -110,6 +110,18 @@ NS_ASSUME_NONNULL_BEGIN
     cell.contentConfiguration = cfg;
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
 
+    // 首页年卡促销：静态定位未收束，用户同意先做其它项。这一行只呈现说明，
+    // 不放可切换控件，也不读 saved 值 / 不写默认 —— 免得显示成「默认 YES 已生效」。
+    // 复用回普通行时 accessoryView 已被置 nil，下面的 isKindOfClass 会重新创建 UISwitch。
+    if ([@(spec->key) isEqualToString:@"BDRemoveHomePromo"]) {
+        UIListContentConfiguration *note = [UIListContentConfiguration subtitleCellConfiguration];
+        note.text = @(spec->title);
+        note.secondaryText = @"待定位，本版本暂时保留";
+        cell.contentConfiguration = note;
+        cell.accessoryView = nil;
+        return cell;
+    }
+
     UISwitch *sw = (UISwitch *)cell.accessoryView;
     if (![sw isKindOfClass:[UISwitch class]]) {
         sw = [[UISwitch alloc] init];
