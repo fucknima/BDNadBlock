@@ -175,6 +175,9 @@ present 之前还有主线程/modal 守卫，守卫拒绝时菜单不会出现�
 
 ## 6. 验证状态
 
+- **容量小卡代码** `56d331c` 已通过 [CI 38996332916](https://github.com/fucknima/BDNadBlock/actions/runs/38996332916)：
+  11组机制测试、真实UIKit严格编译与arm64/arm64e构建成功；验证分支未上传产物。包含21键清单、两种样式各16组门控、非主线程/未知高度透传及依赖失败隔离。
+  以上不代表真机隐藏、6pt段间距、异步刷新或稳定性已验证。
 - **已接线**：菜单组件与 `Tweak.xm` / `MenuEntry.h` / CI 都已接上（`BDNadPrefsInit()` 在构造器
   最前，随后装各组件 hook，`BDMEInstallAll()` 装入口按钮）。CI 里已包含本组件那一步：
   ```
