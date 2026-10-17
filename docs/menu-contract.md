@@ -142,6 +142,9 @@ static inline void BDPresentPurificationSettings(UIViewController *host, NSURL *
   `UINavigationController` + 右上“完成”。
 - 同一菜单已在导航栈里 -> `popToViewController` 回到它，不堆叠。
 - 分享行点击时若本菜单自己已有 `presentedViewController`（分享/提示面板）-> 直接返回，不叠第二个面板。
+- 最后一组“关于”位于诊断组之后，固定两行：免责声明、Telegram交流群；它不是偏好分组，不新增key或开关，原21项与诊断分享行索引不变。
+  免责声明点击展示系统alert，内容说明非官方、兼容/数据风险、备份和合规使用，不要求同意也不写入状态。
+  群组链接唯一来源为 `https://t.me/fuckAd1024`，只在点击后通过系统 `openURL:options:completionHandler:` 打开；失败时仅在菜单仍可见且无模态时提示，不自动重试、不主动联网探测。
 - 只在主线程、由 UIKit 按钮触发时调用（内部 `[NSThread isMainThread]` 保护）。
 - `logURL` 传现有日志文件 `Documents/BDNadBlock-dump.txt` 的 URL；
   文件不存在/不可读 -> `UIAlertController` 明确提示；可读 -> `UIActivityViewController`
