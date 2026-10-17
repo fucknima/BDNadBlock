@@ -43,6 +43,7 @@ static BOOL BDRemovePersonalBanner(void) { return BDNadPrefsActive(@"BDRemovePer
 static BOOL BDRemoveRenewButton(void)   { return BDNadPrefsActive(@"BDRemoveRenewButton"); }
 static BOOL BDRemovePersonalPromotions(void) { return BDNadPrefsActive(@"BDRemovePersonalPromotions"); }
 static BOOL BDRemoveTaskCard(void)      { return BDNadPrefsActive(@"BDRemoveTaskCard"); }
+static BOOL BDRemovePersonalSpaceCard(void) { return BDNadPrefsActive(@"BDRemovePersonalSpaceCard"); }
 static BOOL BDRemoveTransferGamePromo(void) { return BDNadPrefsActive(@"BDRemoveTransferGamePromo"); }
 static BOOL BDRemoveTransferYikePromo(void) { return BDNadPrefsActive(@"BDRemoveTransferYikePromo"); }
 static BOOL BDRemoveTransferCardPromo(void) { return BDNadPrefsActive(@"BDRemoveTransferCardPromo"); }
@@ -57,7 +58,7 @@ static BOOL BDAdMethodsEnabled(void)    { return BDNadPrefsActive(@"BDNadBlockAd
 // FeatureRemoval.h 提供 BDFRSpec / BDFRResolve / BDFRInstallSpec（下面几个组件的安装器）
 // TabRemoval.h     底部 AI tab 过滤（复用安装器）
 // PersonalRemoval.h「我的」活动轮播 + 推广整排（复用安装器）
-// PersonalViewRemoval.h「我的」任务卡 / 金币卡（布局 post-hook + 只读 getter 依赖）
+// PersonalViewRemoval.h「我的」任务/容量小卡（共用布局 post-hook + 双卡折叠高度）
 // RenewButtonRemoval.h「去续费」按钮可隐藏（不 import UIKit，用本文件顶部的真实 UIKit 声明）
 // TransferPromoRemoval.h 一刻相册行内推广 + 下载小游戏引导 + 免流办卡 + 数据包(流量包)引导 + 加速试用促销（Foundation only）
 // HomeBannerExperiment.h 首页顶部横幅容器·实验（UIKit 由本文件顶部 import 提供；默认关闭）
@@ -86,7 +87,7 @@ void BDNadUICompileCheck(UIViewController *host, NSURL *logURL) {
     BDHBInstallAll();                        // 首页顶部横幅容器·实验（默认关闭）
     BDTPInstallAll();                        // 传输页一刻相册行内推广 + 下载小游戏引导
     BDPRInstallData();                       // 「我的」活动轮播 + 推广整排
-    BDPVInstallAll();                        // 「我的」任务卡两条 -layoutViews
+    BDPVInstallAll();                        // 「我的」任务/容量小卡两种布局与高度
     BDRBInstallAll();                        // 「去续费」按钮三条 vipButton
     BDTRInstallAll();                        // 底部「库库AI」tab 过滤 + 索引换算
     BDSRInstallData();                       // 搜索框轮播词数据层

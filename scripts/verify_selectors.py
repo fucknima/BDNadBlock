@@ -90,6 +90,9 @@ FEATURE_HOOKS = [
     # 「我的」积分卡：两个 section 各自的 -layoutViews（post-hook 里再摘 pointsCard）。
     ("BDPanPersonalSpaceAndPointSection", "-", "layoutViews", "v16@0:8"),
     ("BDPanPersonalSpaceSection", "-", "layoutViews", "v16@0:8"),
+    # 容量与任务卡都隐藏时压缩卡片行，保留宿主6pt段间距。
+    ("BDPanPersonalSpaceAndPointSection", "-", "heightForView", "d16@0:8"),
+    ("BDPanPersonalSpaceSection", "-", "heightForView", "d16@0:8"),
     # 冷/热启动开屏：只改「该不该展示」这一步的 bool。自有实例方法，
     # self/_cmd + q + @ + @（argc 5，运行期仍由 installer 用 method_getNumberOfArguments 兜底）。
     ("BDNCUIAdvertisesManage", "-", "needToShowSplashWithLaunchType:launchUrl:launchOptions:",
@@ -141,6 +144,8 @@ FEATURE_DEPS = [
     # 积分卡 post-hook 的 getter 依赖：两个 section 各自的 -pointsCard（@16@0:8）。
     ("BDPanPersonalSpaceAndPointSection", "-", "pointsCard", "@16@0:8"),
     ("BDPanPersonalSpaceSection", "-", "pointsCard", "@16@0:8"),
+    ("BDPanPersonalSpaceAndPointSection", "-", "spaceCard", "@16@0:8"),
+    ("BDPanPersonalSpaceSection", "-", "spaceCard", "@16@0:8"),
 ]
 
 # no-op 只保证 x0 有效。返回结构体/浮点/复数的方法调用方会读 s0/x1/v0 —— 垃圾。
