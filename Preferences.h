@@ -56,6 +56,7 @@ static const BDNadPrefsSpec BDNadPrefsSpecs[] = {
     {"BDRemovePersonalPromotions", "隐藏推广入口整排",       YES, BDNadPrefsGroupPersonal},
     {"BDRemovePersonalBanner",     "隐藏活动轮播",           YES, BDNadPrefsGroupPersonal},
     {"BDRemoveTaskCard",           "隐藏任务系统卡片",       YES, BDNadPrefsGroupPersonal},
+    {"BDRemovePersonalSpaceCard",  "隐藏容量管理卡片",       YES, BDNadPrefsGroupPersonal},
     {"BDRemoveRenewButton",        "隐藏续费按钮",           NO,  BDNadPrefsGroupPersonal},
     // 广告
     {"BDNadBlockNetwork",          "广告网络拦截·旧规则",    YES, BDNadPrefsGroupAds},

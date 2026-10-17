@@ -1,7 +1,7 @@
 # BDNadBlock
 
 百度网盘 (com.baidu.netdisk) **13.35.5**（build `13.35.5.6`）的净化 tweak：
-一个设置菜单 + **20 个配置键、20 个可切换项**，不再显示重复的「年卡待定位」说明行。
+一个设置菜单 + **21 个配置键、21 个可切换项**，不再显示重复的「年卡待定位」说明行。
 菜单之下挂两层广告拦截（网络规则 / 展示方法）和若干「原生组装或纯显示谓词」处的精准 hook。
 **13.32.2 的既有净化功能保留**，升级边界见下文；删除的是没有实现逻辑的重复说明行，不是顶部横幅功能。
 
@@ -26,8 +26,8 @@
 
 ## 开关
 
-**唯一默认值表在 `Preferences.h`**（20 个配置键），菜单标题/分组也从那张表取，代码里不再抄第二份。
-只写本组件这 20 个键到 `NSUserDefaults`，不写账号、缓存或原生偏好。
+**唯一默认值表在 `Preferences.h`**（21 个配置键），菜单标题/分组也从那张表取，代码里不再抄第二份。
+只写本组件这 21 个键到 `NSUserDefaults`，不写账号、缓存或原生偏好。
 
 **保存后必须彻底退出 App 再冷启动才生效**：运行期所有 hook 读的是**进程启动快照**，
 菜单改值不改当前进程、不热改 UIKit、不自动退出、不清网盘数据。
@@ -45,6 +45,7 @@
 | `BDRemovePersonalPromotions` | 隐藏推广入口整排 | YES | 已接线（基线 CI 通过） |
 | `BDRemovePersonalBanner` | 隐藏活动轮播 | YES | 已实现 |
 | `BDRemoveTaskCard` | 隐藏任务系统卡片 | YES | 已接线（基线 CI 通过） |
+| `BDRemovePersonalSpaceCard` | 隐藏容量管理卡片 | YES | 用户指定的已用容量/百分比/管理空间小卡，独立开关 |
 | `BDRemoveRenewButton` | 隐藏续费按钮 | **NO** | 已实现 |
 | `BDNadBlockNetwork` | 广告网络拦截·旧规则 | YES | 实验 |
 | `BDNadBlockAdMethods` | 广告展示拦截·实验 | YES | 实验 |
@@ -75,7 +76,7 @@
 | 我的·活动轮播 | `+[BDPanPersonalConfig bannerSwitch]` → NO | 该开关为 NO 时原生就不建整个 banner section |
 | 我的·推广整排 | `-[BDPanPersonalWalletSection heightForView]` → `-6.0`；`-[BDPanPersonalCenterWalletSection heightForView]` → `-3.0`（各 class 自己的原生收起值） | 只影响读这两个 `heightForView` 的路径；不清数据、不拦接口，该区域请求是否仍发生未验证 |
 | 我的·运营位 | `-[BDPanOperationSpaceSection heightForView]`（`d16@0:8`）先调原实现一次，再按 `BDRemovePersonalPromotions` 改为 `-6.0` | 同时隐藏该段活动卡与广告/贷款卡。两版已核宿主固定加 `6.0` 合成零行高，**不是本类原生收起分支**；动态/跨镜像调用未穷尽，真机布局未验，不改其它 section |
-| 我的·任务卡 | `-[BDPanPersonalSpaceSection layoutViews]` / `-[BDPanPersonalSpaceAndPointSection layoutViews]` post-hook → 隐藏各自 `pointsCard` | 先布局后隐藏；**容量卡与行高常量（80.0 / 96.0）一点没碰**，任务卡位置允许留空 |
+| 我的·任务/容量小卡 | 复用两种 `SpaceSection` 的 `layoutViews` post-hook，任务开关隐藏 `pointsCard`，容量开关隐藏 `spaceCard` | 原布局先调一次，两依赖独立校验；仅一张隐藏时保留原高度。两张都隐藏、依赖与布局已接线且主线程时，已核原高度80/84改为0，保留宿主6pt段间距；未知高度/后台原值透传。不改上方SVIP权益卡、真实配额或正常容量功能 |
 | 我的·续费按钮 | 三处 `-vipButton` getter（`BDPanPersonNewVipCardHeaderView` / `BDPanPersonVipHeaderView` / `BDPanPersonAdvanceVIPHeaderView`）各自独立隐藏按钮 | **默认 NO**；只藏按钮，**整卡既有会员点击行为保留**；三条互不依赖 |
 | 传输页·一刻相册推广 | 两条 `-canShowYikeBanner`（`-[BDPanTransViewController …]` 与 `-[BDPanTransferFileTransListViewController …]`，各自 `B16@0:8`、类自有实例方法）**先调原实现取原 bool**，仅「原 true 且总开关开、非诊断、`BDRemoveTransferYikePromo` 开」时改判 false | 第一条宿主已证：gate 为 NO 时走原生行高入口的共同返回（**行高 0、无空行**），与「用户手动关闭」同一条布局；**不改索引/高度/section**。第二条 Yike 的运行期展示影响**尚未验证**，保留它只为「原方法先调一次 + 精确透传」 |
 | 传输页·下载小游戏引导 | `-[BDPanTransIdleGameManager canTransIdleGameWidgetShow]`（`B16@0:8`）同样先调原实现，仅在开关生效且原为 true 时改判 false | 原生消费点本就有「gate 为 NO → 直接返回、不存 block、不建 widget」的分支；**不改 AB gate、任务、速度、暂停、并发** |
@@ -183,7 +184,7 @@ arm64 / arm64e 双架构构建通过：
 
 - **静态适配目标是 13.35.5（build `13.35.5.6`）**；已有冷/热启动开屏修复保留，本轮删除重复年卡说明行，
   本轮继续处理新发现的推广入口。用户已明确暂停搜索页「试试这样问」，**本轮不移除该模块、不改搜索逻辑**。
-- 对13.35.5与13.32.2分别跑仓库既有校验器：**18个广告 selector + 36个精准 hook + 16个依赖全部 encoding 匹配、0问题**。
+- 对13.35.5与13.32.2分别跑仓库既有校验器：**18个广告 selector + 38个精准 hook + 18个依赖全部 encoding 匹配、0问题**。
   这只说明**签名元数据兼容**，**不宣称**所有旧 feature 在 13.35.5 上的实际 UI 效果都已适配或安全 ——
   页面结构、展示时机、布局都要真机看。
 - 新包 `MinimumOS 18.0` 是 App 自己的 `Info.plist` 要求，**不是**本插件的要求；插件自身部署目标保持
@@ -239,6 +240,10 @@ UIKit strict syntax 与 arm64 / arm64e 双架构构建；此前 `7e4d8e92`（run
 菜单删除提交 `97481d2` 已通过 [CI 38924448154](https://github.com/fucknima/BDNadBlock/actions/runs/38924448154)。
 本轮完整推广代码 `5bb57b9` 已通过 [CI 38939593185](https://github.com/fucknima/BDNadBlock/actions/runs/38939593185)：
 11组机制测试（含运营位24组合、流量包16组合、试用身份/依赖/非主线程与App Open 144组合回归）、真实UIKit严格编译及arm64/arm64e构建；验证分支未上传产物，仅 `main` 发布 CI 成功后提供新下载。
+
+容量管理小卡独立隐藏提交 `56d331c` 已通过 [CI 38996332916](https://github.com/fucknima/BDNadBlock/actions/runs/38996332916)：
+11组机制测试、真实UIKit严格编译及arm64/arm64e构建全通过，包含21键、两种样式各16组双卡门控与依赖失败隔离；验证分支未上传产物。
+本轮只新增容量小卡隐藏及双卡占位压缩；SVIP权益卡保留，搜索未改，启动图深色取消。真机效果、间距与稳定性仍待验证。
 `BDExperimentHideHomeBanner` 仍默认关闭，既有净化项一个都没有删除。
 这些都只是**编译与机制**层面的证据：**真机效果未验，编译与机制测试都不等于真机生效。**
 
@@ -292,8 +297,7 @@ log stream --predicate 'eventMessage CONTAINS "BDNadBlock"'
 3. 首页年卡促销已有用户单设备反馈移除有效；顶部横幅实验在其它设备、内容变化和异步布局下仍可能误伤或留白。
 4. 推荐/创意的 hook 只保证「渲染 + 组装 + 已有解析/分页路径」；共享 manager 的冷启动预取、
    socket / VoIP / remotePush 入口没有被证明被挡住。游戏中心那条是组装闸门。
-5. 任务卡隐藏后**容量区域与 section 原行高都保留**（80.0 / 96.0 未动），只是任务卡原占位可能留白；
-   真机布局未验证。
+5. 容量小卡按用户单独授权隐藏，不把正常容量服务视作广告。只隐藏任务/容量其中一张时允许留空；两张都隐藏时压缩卡片高度，保留6pt段间距，真机布局未验证。
 6. 底部 tab 的索引换算**需真机测试登录 / 退出 / 企业空间切换**等根视图切换场景。
 7. 网络层覆盖有限（抓包仍有未覆盖请求）；除「不改已创建 session」外，具体原因未确定。
 8. 展示方法层的超时与回调行为未验证。

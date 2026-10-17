@@ -129,6 +129,7 @@ static BOOL BDRemovePersonalBanner(void) { return BDNadPrefsActive(@"BDRemovePer
 static BOOL BDRemoveRenewButton(void)   { return BDNadPrefsActive(@"BDRemoveRenewButton"); }
 static BOOL BDRemovePersonalPromotions(void) { return BDNadPrefsActive(@"BDRemovePersonalPromotions"); }
 static BOOL BDRemoveTaskCard(void)      { return BDNadPrefsActive(@"BDRemoveTaskCard"); }
+static BOOL BDRemovePersonalSpaceCard(void) { return BDNadPrefsActive(@"BDRemovePersonalSpaceCard"); }
 static BOOL BDRemoveTransferGamePromo(void) { return BDNadPrefsActive(@"BDRemoveTransferGamePromo"); }
 static BOOL BDRemoveTransferYikePromo(void) { return BDNadPrefsActive(@"BDRemoveTransferYikePromo"); }
 static BOOL BDRemoveTransferCardPromo(void) { return BDNadPrefsActive(@"BDRemoveTransferCardPromo"); }

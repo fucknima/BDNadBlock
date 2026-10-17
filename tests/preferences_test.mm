@@ -9,7 +9,7 @@
 // 同一 suite 的新 defaults 实例（**同进程可见性**，不等于已验证真实进程重启/落盘恢复）
 // 能读到、已建快照不随写入改变、下一次快照读到新值、总开关/诊断/独立选项可读、
 // 传输/下载页底部五个新键（一刻相册 / 下载小游戏 / 免流办卡 / 数据包引导 / 加速试用促销）的
-// 默认值、独立保存与快照语义（键位次由固定清单逐位校验，20 key / 20 switch）；
+// 默认值、独立保存与快照语义（键位次由固定清单逐位校验，21 key / 21 switch）；
 // 首页横幅容器实验键默认 NO、保存后旧快照不变/新快照可见、与旧键互不影响；
 // 退役键（BDRemoveHomePromo）不在表里：读 fail-closed、写被拒、不进快照，旧值也不被本组件清理。
 //
@@ -40,7 +40,7 @@ static NSString *const kExpectedKeys[] = {
     @"BDRemoveJobNovel", @"BDRemoveSearchPromo", @"BDRemoveSearchAI",
     @"BDExperimentHideHomeBanner",
     @"BDRemoveGameCenter", @"BDRemovePersonalPromotions",
-    @"BDRemovePersonalBanner", @"BDRemoveTaskCard", @"BDRemoveRenewButton",
+    @"BDRemovePersonalBanner", @"BDRemoveTaskCard", @"BDRemovePersonalSpaceCard", @"BDRemoveRenewButton",
     @"BDNadBlockNetwork", @"BDNadBlockAdMethods",
     @"BDRemoveTransferYikePromo", @"BDRemoveTransferGamePromo", @"BDRemoveTransferCardPromo",
     @"BDRemoveTransferDataPromo", @"BDRemoveTransferTrialPromo",
@@ -76,6 +76,8 @@ static void TestDefaults(void) {
     CHECK(BDNadPrefsSpecForKey(@"BDExperimentHideHomeBanner")->defaultValue == NO);
     CHECK(BDNadPrefsSpecForKey(@"BDExperimentHideHomeBanner")->group == BDNadPrefsGroupHome);
     CHECK(BDNadPrefsSpecForKey(@"BDNadBlockAdMethods")->defaultValue == YES);
+    CHECK(BDNadPrefsSpecForKey(@"BDRemovePersonalSpaceCard")->defaultValue == YES);
+    CHECK(BDNadPrefsSpecForKey(@"BDRemovePersonalSpaceCard")->group == BDNadPrefsGroupPersonal);
     // 传输页三个新键：显式核对默认 YES 与广告分组（位次已由上面的固定清单逐位校验）。
     CHECK(BDNadPrefsSpecForKey(@"BDRemoveTransferYikePromo")->defaultValue == YES);
     CHECK(BDNadPrefsSpecForKey(@"BDRemoveTransferGamePromo")->defaultValue == YES);
@@ -162,6 +164,20 @@ int main(void) {
         CHECK(BDNadPrefsDesired(d, @"BDNadBlockEnabled") == YES);
 
         // 写入 owned key 才成功。
+        // 容量管理卡与任务卡独立；保存后旧快照不变，下次快照才读取新值。
+        NSDictionary<NSString *, NSNumber *> *spaceBefore = BDNadPrefsSnapshot(d);
+        CHECK(spaceBefore[@"BDRemovePersonalSpaceCard"].boolValue == YES);
+        CHECK(BDNadPrefsSetDesired(d, @"BDRemovePersonalSpaceCard", NO) == YES);
+        CHECK(spaceBefore[@"BDRemovePersonalSpaceCard"].boolValue == YES);
+        CHECK(BDNadPrefsSnapshot(d)[@"BDRemovePersonalSpaceCard"].boolValue == NO);
+        CHECK(BDNadPrefsDesired(d, @"BDRemoveTaskCard") == YES);
+        CHECK(BDNadPrefsSetDesired(d, @"BDRemoveTaskCard", NO) == YES);
+        CHECK(BDNadPrefsSetDesired(d, @"BDRemovePersonalSpaceCard", YES) == YES);
+        CHECK(BDNadPrefsDesired(d, @"BDRemoveTaskCard") == NO);
+        NSUserDefaults *spaceReopened = [[NSUserDefaults alloc] initWithSuiteName:suiteName];
+        CHECK(BDNadPrefsDesired(spaceReopened, @"BDRemovePersonalSpaceCard") == YES);
+        CHECK(BDNadPrefsDesired(spaceReopened, @"BDRemoveTaskCard") == NO);
+        CHECK(BDNadPrefsSetDesired(d, @"BDRemoveTaskCard", YES) == YES);
         CHECK(BDNadPrefsSetDesired(d, @"BDRemoveRenewButton", YES) == YES);
         CHECK([d objectForKey:@"BDRemoveRenewButton"] != nil);
         CHECK(BDNadPrefsDesired(d, @"BDRemoveRenewButton") == YES);
