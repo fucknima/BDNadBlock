@@ -14,6 +14,10 @@ jobs:
       - name: Check ObjC metadata parser
         run: python3 scripts/verify_selectors.py --selftest
 
+      # 仅检查关于条目的源码结构契约，不冒充UIKit运行测试。
+      - name: Check settings About contract (source only)
+        run: python3 tests/settings_menu_contract_test.py
+
       # FeatureRemoval.h 的机制测试（动态 fake 类 + 真实同名 selector）。
       # 这不是真机测试：只证明匹配时抑制/不符时跳过/透传原实现/幂等不递归/不动父类。
       - name: Host test (FeatureRemoval.h, clang++, not a device test)

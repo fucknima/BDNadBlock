@@ -2,6 +2,7 @@
 //
 // 只有一个类 BDNadBlockSettingsViewController（UITableViewStyleInsetGrouped），
 // 分组/标题/默认值全部来自 Preferences.h 的规格表 —— 这里不再抄一份默认值。
+// 唯一例外是最后的「关于」组：纯展示（免责声明 + 群链接），没有 key、不读写 NSUserDefaults。
 // 开关只写规格表里的 owned key；写的是 NSUserDefaults，冷启动才生效。
 //
 // 入口：BDPresentPurificationSettings(host, logURL)
@@ -40,7 +41,29 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)bdShareLogFromCell:(UITableViewCell * _Nullable)cell;
 - (NSUInteger)bdSwitchRowCountInGroup:(BDNadPrefsGroup)group;
 - (const BDNadPrefsSpec * _Nullable)bdSpecAtRow:(NSInteger)row inGroup:(BDNadPrefsGroup)group;
+- (UITableViewCell *)bdAboutCellForRow:(NSInteger)row;
+- (void)bdShowDisclaimer;
+- (void)bdOpenGroupLink;
 @end
+
+#pragma mark - 关于（固定展示，不读不写任何 key）
+
+// 群链接唯一来源：副标题与外链都引用这一份，不要在别处再抄一遍。
+static NSString *const BDNadAboutGroupURLString = @"https://t.me/fuckAd1024";
+
+// 免责声明的固定文案（只展示，不落盘、不要求同意）。
+static NSString *const BDNadAboutDisclaimerText =
+    @"本工具为非官方第三方插件，与百度无关联，仅供个人学习与技术研究。\n\n"
+    @"不保证所有版本或设备兼容，使用可能造成界面异常、功能失效或数据风险，请事先备份重要数据。\n\n"
+    @"请在法律允许且已获授权的范围内使用，遵守相关服务条款并自行评估风险；本声明不排除依法不可免除的责任。";
+
+// 关于组的固定坐标：最后一组；两行只展示，原 21 个开关的 tag 与诊断分享行索引都不受影响。
+enum {
+    BDNadAboutSection = BDNadPrefsGroupDiagnostics + 1,
+    BDNadAboutRowDisclaimer = 0,
+    BDNadAboutRowGroup = 1,
+    BDNadAboutRowCount = 2,
+};
 
 @implementation BDNadBlockSettingsViewController
 
@@ -57,7 +80,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
     (void)tableView;
-    return (NSInteger)BDNadPrefsGroupDiagnostics + 1;
+    return (NSInteger)BDNadAboutSection + 1;   // 规格表分组 + 最后的「关于」展示组
 }
 
 - (NSUInteger)bdSwitchRowCountInGroup:(BDNadPrefsGroup)group {
@@ -80,6 +103,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     (void)tableView;
+    if (section == (NSInteger)BDNadAboutSection) return BDNadAboutRowCount;   // 关于：固定两行，先分流
     BDNadPrefsGroup group = (BDNadPrefsGroup)section;
     NSUInteger n = [self bdSwitchRowCountInGroup:group];
     if (group == BDNadPrefsGroupDiagnostics) n += 1;   // 多一行：分享诊断日志
@@ -88,11 +112,13 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (NSString * _Nullable)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     (void)tableView;
+    if (section == (NSInteger)BDNadAboutSection) return @"关于";
     return BDNadPrefsGroupTitle((BDNadPrefsGroup)section);
 }
 
 - (NSString * _Nullable)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
+    if (section == (NSInteger)BDNadAboutSection) return nil;   // 关于组只展示：不借总开关的提示
     if (section != (NSInteger)BDNadPrefsGroupMaster) return nil;
     NSString *note = @"保存后请彻底退出后台并重开百度网盘生效，不会自动退出；当前页面不热更新。";
     return BDNadPrefsHasPendingChanges() ? [@"有改动待生效。" stringByAppendingString:note] : note;
@@ -136,8 +162,31 @@ NS_ASSUME_NONNULL_BEGIN
     return cell;
 }
 
+// 关于组两行共用同一 builder；独立 reuse identifier，不碰开关/分享行的 cell 状态。
+- (UITableViewCell *)bdAboutCellForRow:(NSInteger)row {
+    UITableViewCell *cell = [self.tableView dequeueReusableCellWithIdentifier:@"BDNadAbout"];
+    if (!cell)
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
+                                      reuseIdentifier:@"BDNadAbout"];
+    cell.accessoryView = nil;   // 防复用串上开关组的 UISwitch
+    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+
+    UIListContentConfiguration *cfg = [UIListContentConfiguration subtitleCellConfiguration];
+    cfg.textProperties.numberOfLines = 0;
+    cfg.secondaryTextProperties.numberOfLines = 0;
+    if (row == (NSInteger)BDNadAboutRowGroup) {
+        cfg.text = @"Telegram 交流群";
+        cfg.secondaryText = BDNadAboutGroupURLString;   // 与打开外链引用同一常量
+    } else {
+        cfg.text = @"免责声明";
+    }
+    cell.contentConfiguration = cfg;
+    return cell;
+}
+
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     (void)tableView;
+    if (indexPath.section == (NSInteger)BDNadAboutSection) return [self bdAboutCellForRow:indexPath.row];
     BDNadPrefsGroup group = (BDNadPrefsGroup)indexPath.section;
     const BDNadPrefsSpec *spec = [self bdSpecAtRow:indexPath.row inGroup:group];
     if (spec) return [self bdSwitchCellForSpec:spec];
@@ -161,6 +210,11 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.section == (NSInteger)BDNadAboutSection) {   // 关于组只走展示分支，绝不落到分享/开关路径
+        if (indexPath.row == (NSInteger)BDNadAboutRowDisclaimer) [self bdShowDisclaimer];
+        else if (indexPath.row == (NSInteger)BDNadAboutRowGroup) [self bdOpenGroupLink];
+        return;   // 非法 row 什么都不做
+    }
     if (indexPath.section != (NSInteger)BDNadPrefsGroupDiagnostics) return;
     if ((NSUInteger)indexPath.row != [self bdSwitchRowCountInGroup:BDNadPrefsGroupDiagnostics]) return;
     [self bdShareLogFromCell:[tableView cellForRowAtIndexPath:indexPath]];
@@ -192,6 +246,38 @@ NS_ASSUME_NONNULL_BEGIN
         pop.sourceRect = cell ? cell.bounds : self.view.bounds;
     }
     [self presentViewController:share animated:YES completion:nil];
+}
+
+- (void)bdShowDisclaimer {
+    if (self.presentedViewController) return;   // 已有面板：不叠第二个
+    UIAlertController *alert =
+        [UIAlertController alertControllerWithTitle:@"免责声明"
+                                           message:BDNadAboutDisclaimerText
+                                    preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)bdOpenGroupLink {
+    if (self.presentedViewController) return;   // 已有面板：不叠第二个
+    NSURL *url = [NSURL URLWithString:BDNadAboutGroupURLString];   // 固定常量，正常不会失效
+    if (!url) return;
+    __weak BDNadBlockSettingsViewController *weakSelf = self;   // 系统回调不延长本 VC 生命周期
+    [UIApplication.sharedApplication openURL:url
+                                     options:@{}
+                           completionHandler:^(BOOL success) {
+        if (success) return;   // 已交给系统选择浏览器/Telegram：不弹框
+        // 文档：该 block 在主线程异步回调。失败只提示，不重试、不换 scheme、不预先探测。
+        BDNadBlockSettingsViewController *vc = weakSelf;
+        if (!vc || vc.presentedViewController) return;   // 已离开或已有面板：不越级 present
+        if (!vc.viewIfLoaded.window) return;             // 视图不在窗口：不弹
+        UIAlertController *alert =
+            [UIAlertController alertControllerWithTitle:@"无法打开群组链接"
+                                               message:BDNadAboutGroupURLString
+                                        preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+        [vc presentViewController:alert animated:YES completion:nil];
+    }];
 }
 
 - (void)bdDone {
