@@ -40,34 +40,35 @@ typedef struct {
     BDNadPrefsGroup group;
 } BDNadPrefsSpec;
 
+// 默认值一律 NO：所有功能默认不开启；已保存的 YES/NO 照旧尊重，不迁移、不重置、不主动写。
 static const BDNadPrefsSpec BDNadPrefsSpecs[] = {
     // 总开关
-    {"BDNadBlockEnabled",          "启用网盘净化",           YES, BDNadPrefsGroupMaster},
+    {"BDNadBlockEnabled",          "启用网盘净化",           NO,  BDNadPrefsGroupMaster},
     // 首页
-    {"BDRemoveRecommend",          "隐藏推荐/创意区域",      YES, BDNadPrefsGroupHome},
-    {"BDRemoveAITab",              "隐藏底部库库AI",         YES, BDNadPrefsGroupHome},
-    {"BDRemoveJobNovel",           "隐藏求职/小说入口",      YES, BDNadPrefsGroupHome},
-    {"BDRemoveSearchPromo",        "隐藏搜索推广词",         YES, BDNadPrefsGroupHome},
-    {"BDRemoveSearchAI",           "隐藏搜索框AI按钮",       YES, BDNadPrefsGroupHome},
+    {"BDRemoveRecommend",          "隐藏推荐/创意区域",      NO,  BDNadPrefsGroupHome},
+    {"BDRemoveAITab",              "隐藏底部库库AI",         NO,  BDNadPrefsGroupHome},
+    {"BDRemoveJobNovel",           "隐藏求职/小说入口",      NO,  BDNadPrefsGroupHome},
+    {"BDRemoveSearchPromo",        "隐藏搜索推广词",         NO,  BDNadPrefsGroupHome},
+    {"BDRemoveSearchAI",           "隐藏搜索框AI按钮",       NO,  BDNadPrefsGroupHome},
     // 实验项：默认关闭，独立 key
     {"BDExperimentHideHomeBanner", "隐藏顶部横幅容器·实验",   NO,  BDNadPrefsGroupHome},
     // 我的
-    {"BDRemoveGameCenter",         "隐藏游戏中心",           YES, BDNadPrefsGroupPersonal},
-    {"BDRemovePersonalPromotions", "隐藏推广入口整排",       YES, BDNadPrefsGroupPersonal},
-    {"BDRemovePersonalBanner",     "隐藏活动轮播",           YES, BDNadPrefsGroupPersonal},
-    {"BDRemoveTaskCard",           "隐藏任务系统卡片",       YES, BDNadPrefsGroupPersonal},
-    {"BDRemovePersonalSpaceCard",  "隐藏容量管理卡片",       YES, BDNadPrefsGroupPersonal},
+    {"BDRemoveGameCenter",         "隐藏游戏中心",           NO,  BDNadPrefsGroupPersonal},
+    {"BDRemovePersonalPromotions", "隐藏推广入口整排",       NO,  BDNadPrefsGroupPersonal},
+    {"BDRemovePersonalBanner",     "隐藏活动轮播",           NO,  BDNadPrefsGroupPersonal},
+    {"BDRemoveTaskCard",           "隐藏任务系统卡片",       NO,  BDNadPrefsGroupPersonal},
+    {"BDRemovePersonalSpaceCard",  "隐藏容量管理卡片",       NO,  BDNadPrefsGroupPersonal},
     {"BDRemoveRenewButton",        "隐藏续费按钮",           NO,  BDNadPrefsGroupPersonal},
     // 广告
-    {"BDNadBlockNetwork",          "广告网络拦截·旧规则",    YES, BDNadPrefsGroupAds},
-    {"BDNadBlockAdMethods",        "广告展示拦截·实验",      YES, BDNadPrefsGroupAds},
+    {"BDNadBlockNetwork",          "广告网络拦截·旧规则",    NO,  BDNadPrefsGroupAds},
+    {"BDNadBlockAdMethods",        "广告展示拦截·实验",      NO,  BDNadPrefsGroupAds},
     // 传输页推广（一刻相册是行内推广、小游戏是引导，不都在页面底部）
-    {"BDRemoveTransferYikePromo",  "隐藏传输页一刻相册",     YES, BDNadPrefsGroupAds},
-    {"BDRemoveTransferGamePromo",  "隐藏下载小游戏引导",     YES, BDNadPrefsGroupAds},
-    {"BDRemoveTransferCardPromo",  "隐藏免流办卡推广",       YES, BDNadPrefsGroupAds},
+    {"BDRemoveTransferYikePromo",  "隐藏传输页一刻相册",     NO,  BDNadPrefsGroupAds},
+    {"BDRemoveTransferGamePromo",  "隐藏下载小游戏引导",     NO,  BDNadPrefsGroupAds},
+    {"BDRemoveTransferCardPromo",  "隐藏免流办卡推广",       NO,  BDNadPrefsGroupAds},
     // 传输/下载页底部 widget 的另外两条：数据包(流量包)付费引导、加速试用商品引导
-    {"BDRemoveTransferDataPromo",  "隐藏流量包付费引导",     YES, BDNadPrefsGroupAds},
-    {"BDRemoveTransferTrialPromo", "隐藏加速试用促销",       YES, BDNadPrefsGroupAds},
+    {"BDRemoveTransferDataPromo",  "隐藏流量包付费引导",     NO,  BDNadPrefsGroupAds},
+    {"BDRemoveTransferTrialPromo", "隐藏加速试用促销",       NO,  BDNadPrefsGroupAds},
     // 诊断
     {"BDNadBlockDumpOnly",         "仅诊断，不执行净化",     NO,  BDNadPrefsGroupDiagnostics},
 };

@@ -53,10 +53,10 @@ NS_ASSUME_NONNULL_BEGIN
 // 群链接唯一来源：副标题与外链都引用这一份，不要在别处再抄一遍。
 static NSString *const BDNadAboutGroupURLString = @"https://t.me/fuckAd1024";
 
-// 免责声明的固定文案：「关于」条目与首次进入提示共用同一份，不要在别处再抄一遍。
-// 只展示/知悉，不构成授权，也不是电子签名；有实质改动时同步升级 Preferences.h 的版本常量。
+// 使用须知正文（不含标题行；标题由弹窗/「关于」条目各自给出）：「关于」条目查看与首次提示
+// 共用这一份，不要在别处再抄一遍。只展示/知悉，不构成授权，也不是电子签名；
+// 标题去重只算表现层变更，不升级 Preferences.h 的确认版本；正文有实质改动才升级。
 static NSString *const BDNadAboutDisclaimerText =
-    @"免责声明：\n\n"
     @"本项目仅供个人学习、技术研究与交流使用，不以商业盈利或侵犯第三方合法权益为目的。\n\n"
     @"本项目为非官方第三方插件，与百度及百度网盘不存在任何关联。\n\n"
     @"请自觉遵守相关法律法规及软件服务条款。如不具备合法使用条件，请勿下载、安装、使用或传播；如已获取，请立即停止使用并删除相关文件。\n\n"
@@ -271,12 +271,13 @@ enum {
     [self bdPresentDisclaimerFirstUse:YES];
 }
 
-// 首次提示与「关于 > 免责声明」共用同一正文和同一个 present 方法，不要抄两份正文。
+// 首次提示与「关于 > 免责声明」共用同一正文、同一标题（使用须知）和同一个 present 方法，不要抄两份正文。
 - (void)bdPresentDisclaimerFirstUse:(BOOL)firstUse {
     if (self.presentedViewController) return;   // 已有面板：不叠第二个
     if (!BDNadMenuActiveAndVisible(self.viewIfLoaded)) return;   // 未上屏/不在前台：不弹
+    // 首次与手动查看统一标题；标题去重不改条款，也不动 Preferences.h 的确认版本。
     UIAlertController *alert =
-        [UIAlertController alertControllerWithTitle:(firstUse ? @"免责声明与使用须知" : @"免责声明")
+        [UIAlertController alertControllerWithTitle:@"使用须知"
                                            message:BDNadAboutDisclaimerText
                                     preferredStyle:UIAlertControllerStyleAlert];
     if (firstUse) {

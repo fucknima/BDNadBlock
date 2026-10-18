@@ -26,13 +26,15 @@
 
 菜单最底部“关于”包含“免责声明”和“Telegram 交流群”（https://t.me/fuckAd1024）。
 首次进入净化设置时展示本版免责声明，点“我已阅读并知悉”后记录阅读版本；再次进入不重复，正文版本变化后重新提示，“关于”仍可随时查看。
-当前正文版本为 `2026-10-18-v3`，逐字采用用户提供的五段声明；旧v2阅读记录不会自动视为已阅读新版，确认新版后才更新记录。
+弹窗标题统一为“使用须知”，去掉正文中重复的“免责声明：”；五段声明保持原文。此为展示调整，阅读版本仍为 `2026-10-18-v3`，已确认v3的用户不会因此再次被要求确认。
 阅读记录只是风险提示的本地状态，不是有效免责、平台授权或停用既有hook的保证；正式分发建议由执业律师审阅。
 群组仅在点击后交给系统打开，不强制加群。每次请求临时观察当前场景失活，已离开前台的请求不在返回后补失败框；确实未交接且仍在前台的失败可手动复制链接。
 
 ## 开关
 
 **唯一默认值表在 `Preferences.h`**（21 个配置键），菜单标题/分组也从那张表取，代码里不再抄第二份。
+**所有21个开关默认关闭（NO）**，包括总开关、各项净化、网络/广告展示拦截、实验与诊断。仅对未保存值或错误类型的默认回退生效；已有明确保存的YES/NO保留，不做迁移、清理或强制关闭。
+要启用净化，请自行打开总开关及需要的具体功能，再彻底退出重开；默认关闭不妨碍进入设置和查看使用须知。
 偏好接口只写本组件这21个开关键；另有独立元数据 `BDNadBlockDisclaimerAcknowledgedVersion` 记录用户确认阅读的正文版本，不进入开关表或启动快照，不修改账号、缓存或原生偏好。
 
 **保存后必须彻底退出 App 再冷启动才生效**：运行期所有 hook 读的是**进程启动快照**，
@@ -40,26 +42,26 @@
 
 | key | 菜单标题 | 默认 | 状态 |
 |---|---|---|---|
-| `BDNadBlockEnabled` | 启用网盘净化 | YES | 总开关 |
-| `BDRemoveRecommend` | 隐藏推荐/创意区域 | YES | 已实现 |
-| `BDRemoveAITab` | 隐藏底部库库AI | YES | 已实现（索引换算需真机验证） |
-| `BDRemoveJobNovel` | 隐藏求职/小说入口 | YES | 已实现 |
-| `BDRemoveSearchPromo` | 隐藏搜索推广词 | YES | 已实现 |
-| `BDRemoveSearchAI` | 隐藏搜索框AI按钮 | YES | 已实现 |
+| `BDNadBlockEnabled` | 启用网盘净化 | NO | 总开关 |
+| `BDRemoveRecommend` | 隐藏推荐/创意区域 | NO | 已实现 |
+| `BDRemoveAITab` | 隐藏底部库库AI | NO | 已实现（索引换算需真机验证） |
+| `BDRemoveJobNovel` | 隐藏求职/小说入口 | NO | 已实现 |
+| `BDRemoveSearchPromo` | 隐藏搜索推广词 | NO | 已实现 |
+| `BDRemoveSearchAI` | 隐藏搜索框AI按钮 | NO | 已实现 |
 | `BDExperimentHideHomeBanner` | 隐藏顶部横幅容器·实验 | **NO** | 用户已反馈开启后年卡促销消失；仍保留实验开关和旧保存值 |
-| `BDRemoveGameCenter` | 隐藏游戏中心 | YES | 已实现 |
-| `BDRemovePersonalPromotions` | 隐藏推广入口整排 | YES | 已接线（基线 CI 通过） |
-| `BDRemovePersonalBanner` | 隐藏活动轮播 | YES | 已实现 |
-| `BDRemoveTaskCard` | 隐藏任务系统卡片 | YES | 已接线（基线 CI 通过） |
-| `BDRemovePersonalSpaceCard` | 隐藏容量管理卡片 | YES | 用户指定的已用容量/百分比/管理空间小卡，独立开关 |
+| `BDRemoveGameCenter` | 隐藏游戏中心 | NO | 已实现 |
+| `BDRemovePersonalPromotions` | 隐藏推广入口整排 | NO | 已接线（基线 CI 通过） |
+| `BDRemovePersonalBanner` | 隐藏活动轮播 | NO | 已实现 |
+| `BDRemoveTaskCard` | 隐藏任务系统卡片 | NO | 已接线（基线 CI 通过） |
+| `BDRemovePersonalSpaceCard` | 隐藏容量管理卡片 | NO | 用户指定的已用容量/百分比/管理空间小卡，独立开关 |
 | `BDRemoveRenewButton` | 隐藏续费按钮 | **NO** | 已实现 |
-| `BDNadBlockNetwork` | 广告网络拦截·旧规则 | YES | 实验 |
-| `BDNadBlockAdMethods` | 广告展示拦截·实验 | YES | 实验 |
-| `BDRemoveTransferYikePromo` | 隐藏传输页一刻相册 | YES | 已接线（传输页推广） |
-| `BDRemoveTransferGamePromo` | 隐藏下载小游戏引导 | YES | 已接线（传输页推广） |
-| `BDRemoveTransferCardPromo` | 隐藏免流办卡推广 | YES | 已接线（免流办卡 widget gate） |
-| `BDRemoveTransferDataPromo` | 隐藏流量包付费引导 | YES | 独立开关，不禁用已购买流量 |
-| `BDRemoveTransferTrialPromo` | 隐藏加速试用促销 | YES | 只过滤明确促销态，保留进行中与未知态 |
+| `BDNadBlockNetwork` | 广告网络拦截·旧规则 | NO | 实验 |
+| `BDNadBlockAdMethods` | 广告展示拦截·实验 | NO | 实验 |
+| `BDRemoveTransferYikePromo` | 隐藏传输页一刻相册 | NO | 已接线（传输页推广） |
+| `BDRemoveTransferGamePromo` | 隐藏下载小游戏引导 | NO | 已接线（传输页推广） |
+| `BDRemoveTransferCardPromo` | 隐藏免流办卡推广 | NO | 已接线（免流办卡 widget gate） |
+| `BDRemoveTransferDataPromo` | 隐藏流量包付费引导 | NO | 独立开关，不禁用已购买流量 |
+| `BDRemoveTransferTrialPromo` | 隐藏加速试用促销 | NO | 只过滤明确促销态，保留进行中与未知态 |
 | `BDNadBlockDumpOnly` | 仅诊断，不执行净化 | **NO** | 诊断 |
 
 开关 **ON = 去除/拦截**。所有去除类开关的前置条件都是
