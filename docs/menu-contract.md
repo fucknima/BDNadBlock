@@ -25,41 +25,41 @@
 
 | key | 中文标题 | 默认 | 分组 |
 |---|---|---|---|
-| `BDNadBlockEnabled` | 启用网盘净化 | YES | 总开关 |
-| `BDRemoveRecommend` | 隐藏推荐/创意区域 | YES | 首页 |
-| `BDRemoveAITab` | 隐藏底部库库AI | YES | 首页 |
-| `BDRemoveJobNovel` | 隐藏求职/小说入口 | YES | 首页 |
-| `BDRemoveSearchPromo` | 隐藏搜索推广词 | YES | 首页 |
-| `BDRemoveSearchAI` | 隐藏搜索框AI按钮 | YES | 首页 |
+| `BDNadBlockEnabled` | 启用网盘净化 | NO | 总开关 |
+| `BDRemoveRecommend` | 隐藏推荐/创意区域 | NO | 首页 |
+| `BDRemoveAITab` | 隐藏底部库库AI | NO | 首页 |
+| `BDRemoveJobNovel` | 隐藏求职/小说入口 | NO | 首页 |
+| `BDRemoveSearchPromo` | 隐藏搜索推广词 | NO | 首页 |
+| `BDRemoveSearchAI` | 隐藏搜索框AI按钮 | NO | 首页 |
 | `BDExperimentHideHomeBanner` | 隐藏顶部横幅容器·实验 | **NO** | 首页 |
-| `BDRemoveGameCenter` | 隐藏游戏中心 | YES | 我的 |
-| `BDRemovePersonalPromotions` | 隐藏推广入口整排 | YES | 我的 |
-| `BDRemovePersonalBanner` | 隐藏活动轮播 | YES | 我的 |
-| `BDRemoveTaskCard` | 隐藏任务系统卡片 | YES | 我的 |
-| `BDRemovePersonalSpaceCard` | 隐藏容量管理卡片 | YES | 我的 |
+| `BDRemoveGameCenter` | 隐藏游戏中心 | NO | 我的 |
+| `BDRemovePersonalPromotions` | 隐藏推广入口整排 | NO | 我的 |
+| `BDRemovePersonalBanner` | 隐藏活动轮播 | NO | 我的 |
+| `BDRemoveTaskCard` | 隐藏任务系统卡片 | NO | 我的 |
+| `BDRemovePersonalSpaceCard` | 隐藏容量管理卡片 | NO | 我的 |
 | `BDRemoveRenewButton` | 隐藏续费按钮 | **NO** | 我的 |
-| `BDNadBlockNetwork` | 广告网络拦截·旧规则 | YES | 广告 |
-| `BDNadBlockAdMethods` | 广告展示拦截·实验 | YES | 广告 |
-| `BDRemoveTransferYikePromo` | 隐藏传输页一刻相册 | YES | 广告 |
-| `BDRemoveTransferGamePromo` | 隐藏下载小游戏引导 | YES | 广告 |
-| `BDRemoveTransferCardPromo` | 隐藏免流办卡推广 | YES | 广告 |
-| `BDRemoveTransferDataPromo` | 隐藏流量包付费引导 | YES | 广告 |
-| `BDRemoveTransferTrialPromo` | 隐藏加速试用促销 | YES | 广告 |
+| `BDNadBlockNetwork` | 广告网络拦截·旧规则 | NO | 广告 |
+| `BDNadBlockAdMethods` | 广告展示拦截·实验 | NO | 广告 |
+| `BDRemoveTransferYikePromo` | 隐藏传输页一刻相册 | NO | 广告 |
+| `BDRemoveTransferGamePromo` | 隐藏下载小游戏引导 | NO | 广告 |
+| `BDRemoveTransferCardPromo` | 隐藏免流办卡推广 | NO | 广告 |
+| `BDRemoveTransferDataPromo` | 隐藏流量包付费引导 | NO | 广告 |
+| `BDRemoveTransferTrialPromo` | 隐藏加速试用促销 | NO | 广告 |
 | `BDNadBlockDumpOnly` | 仅诊断，不执行净化 | **NO** | 诊断 |
 
 开关 **ON = 去除/拦截**。`BDNadBlockEnabled` / `BDNadBlockNetwork` /
 `BDRemoveRecommend` / `BDRemoveGameCenter` / `BDNadBlockDumpOnly` 是旧版已有键，
-默认值与老版本 fallback 一致，老用户值继续被尊重。
+本轮按用户要求统一21项默认NO（含总开关），未设置/错类型回退均关闭；老用户明确保存值继续被尊重，不迁移或强制重置。
 
 用户已反馈顶部横幅实验去掉年卡促销，故删除旧 `BDRemoveHomePromo` 规格项和「待定位」说明行。
-新增容量小卡独立开关后，当前是 **21个键、21个可切换项**，原20项的键、标题、默认值不变。
+当前仍为 **21个键、21个可切换项**，所有键/标题/分组/顺序不变，只把原默认YES的项改为NO。
 不清理设备上的旧键：退役键按未知键处理，读取 NO、写入拒绝、不进启动快照。
 
 “隐藏推广入口整排”（`BDRemovePersonalPromotions`）新增覆盖 `BDPanOperationSpaceSection` 的活动/广告运营整段。
 新 hook 先调用一次原 `heightForView`，再将其改为 `-6.0`，由已核宿主 `+6.0` 算为零行高；原值已为目标值时不记 hit。
 不新增配置，正常容量/会员信息/权益/备份等其它 section 保留；真机布局、动态和跨镜像调用仍未验证。
 
-用户另行要求隐藏已用容量/百分比/管理空间小卡，新增 `BDRemovePersonalSpaceCard`（默认YES）。
+用户另行要求可隐藏已用容量/百分比/管理空间小卡，`BDRemovePersonalSpaceCard` 现与其余功能一样默认NO。
 它与任务卡各有独立开关，复用现有两种布局post-hook，原布局先调一次，依赖失败只跳对应卡片。
 只有布局和两getter都通过校验且两项都隐藏时，主线程把已核80/84原高度改为0，宿主仍加6pt段间距；未知高度/后台透传，不改约束或frame。
 不触碰上方SVIP等级/权益卡、真实配额、购买、账号或其它容量服务。启动图深色按用户要求取消，不提供资源补丁或全App主题开关。
@@ -145,7 +145,7 @@ static inline void BDPresentPurificationSettings(UIViewController *host, NSURL *
 - 最后一组“关于”位于诊断组之后，固定两行：免责声明、Telegram交流群；它不是开关分组，原21项与诊断分享行索引不变。
   首次进入设置页，在 `viewDidAppear:` 且视图活跃、无模态时提示；只有点击“我已阅读并知悉”才保存本版阅读记录，未确认不写。手动从“关于”查看相同正文不改记录。
   阅读版本用固定元数据键 `BDNadBlockDisclaimerAcknowledgedVersion`，不进入21项规格表/开关tag/启动快照/待冷启动改动判断；缺值、旧版本或错误类型视为未确认，保存不清理其它键。
-  正文版本 `2026-10-18-v3` 逐字采用用户提供的声明：学习研究与交流/非商业目的、非官方与无关联、遵法和不具备条件时停止并删除、按现状提供、权利人联系沟通。旧v2记录不能跳过新版提示，不提前更新或清理记录。
+  弹窗标题统一为“使用须知”，去掉正文重复的“免责声明：”，其余五段用户原文逐字保留。仅展示调整，版本仍为 `2026-10-18-v3`，已确认v3者不再为改标题重新提示；旧v2记录仍不能跳过，不提前更新或清理记录。
   此次只改文案与版本，不更改确认按钮、首次提示、关于入口或外链返回守卫；确认不会卸载或停用已有hook。
   免责声明不能保证免责。法律边界参考[司法局对《民法典》496/497/506条的说明](http://www.kmwh.gov.cn/c/2021-10-29/5500052.shtml)，实际效力依适用法律与事实，正式分发需律师审核。
   群组链接唯一来源为 `https://t.me/fuckAd1024`，只在点击后通过系统 `openURL:options:completionHandler:` 打开；本次请求的临时观察者只记录当前场景是否离开前台，完成时先移除。
