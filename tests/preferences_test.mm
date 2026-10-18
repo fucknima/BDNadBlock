@@ -317,9 +317,9 @@ int main(void) {
         CHECK(BDNadPrefsDisclaimerAcknowledged(d) == NO);
         [d setObject:@"" forKey:@"BDNadBlockDisclaimerAcknowledgedVersion"];       // 空串：未确认
         CHECK(BDNadPrefsDisclaimerAcknowledged(d) == NO);
-        [d setObject:@"2020-01-01-v0" forKey:@"BDNadBlockDisclaimerAcknowledgedVersion"];   // 旧版本：未确认
+        [d setObject:@"2026-10-18-v2" forKey:@"BDNadBlockDisclaimerAcknowledgedVersion"];   // 上一真实版本：未确认，且不清旧值
         CHECK(BDNadPrefsDisclaimerAcknowledged(d) == NO);
-        CHECK([[d stringForKey:@"BDNadBlockDisclaimerAcknowledgedVersion"] isEqualToString:@"2020-01-01-v0"]);
+        CHECK([[d stringForKey:@"BDNadBlockDisclaimerAcknowledgedVersion"] isEqualToString:@"2026-10-18-v2"]);
         CHECK(BDNadPrefsSpecForKey(@"BDNadBlockDisclaimerAcknowledgedVersion") == NULL);
         NSDictionary<NSString *, NSNumber *> *metaBefore = BDNadPrefsSnapshot(d);
         CHECK(metaBefore.count == 21 && metaBefore.count == BDNadPrefsSpecCount);   // 元数据没混进规格

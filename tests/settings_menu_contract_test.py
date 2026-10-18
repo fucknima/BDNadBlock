@@ -1,6 +1,7 @@
 """关于菜单 / 免责声明 / 群链接守卫的源码契约回归；不执行 UIKit，不验证外链可达或真机 UI。"""
 
 from pathlib import Path
+import json
 import re
 
 root = Path(__file__).resolve().parents[1]
@@ -42,7 +43,6 @@ assert "BDNadAboutGroupURLString" in opener and "completionHandler:" in opener
 assert "weakSelf" in opener and "presentedViewController" in opener
 assert "viewIfLoaded" in opener
 assert "无法打开群组链接" in source
-assert "非官方" in source and "备份" in source and "依法不可免除" in source
 assert "tg://" not in source and "canOpenURL:" not in source
 
 # 群链接守卫：每次打开一枚临时 observer，先撤再判；只看自己那个 scene，无 scene 才退回 app state。
@@ -66,6 +66,22 @@ presenter = method("bdPresentDisclaimerFirstUse:")
 assert "BDNadAboutDisclaimerText" in presenter and "免责声明与使用须知" in presenter
 assert presenter.index("我已阅读并知悉") < presenter.index("BDNadPrefsAcknowledgeDisclaimer")
 assert source.count("message:BDNadAboutDisclaimerText") == 1   # 只有这一个展示点
+
+# 正文准确性：从正文常量区提取 ObjC 拼接字面量，逐段 json.loads 解码（\n、\"、\\ 交给 stdlib）
+# 后拼接，必须与用户原文逐字完全相等（含标题行、标点、段间空行）；不做关键词抽查，也不自造 ObjC 解析器。
+DISCLAIMER_TEXT = "\n\n".join([
+    "免责声明：",
+    "本项目仅供个人学习、技术研究与交流使用，不以商业盈利或侵犯第三方合法权益为目的。",
+    "本项目为非官方第三方插件，与百度及百度网盘不存在任何关联。",
+    "请自觉遵守相关法律法规及软件服务条款。如不具备合法使用条件，请勿下载、安装、使用或传播；如已获取，请立即停止使用并删除相关文件。",
+    "本项目按现状提供，不对其兼容性、稳定性及适用性作出任何保证。",
+    "如相关权利人对本项目存在异议，可联系项目维护者沟通处理。",
+])
+disclaimer_region = source.split("BDNadAboutDisclaimerText =", 1)[1].split(";", 1)[0]
+disclaimer_segments = re.findall(r'@("(?:\\.|[^"\\])*")', disclaimer_region)
+assert disclaimer_segments, "未从正文常量提取到任何 ObjC 字符串字面量"
+assert "".join(json.loads(segment) for segment in disclaimer_segments) == DISCLAIMER_TEXT, \
+    "声明正文与用户原文不一致"
 assert [m for m in methods if "BDNadPrefsAcknowledgeDisclaimer" in m] == [presenter]
 manual = method("bdShowDisclaimer")
 assert "bdPresentDisclaimerFirstUse:NO" in manual
@@ -76,6 +92,7 @@ specs = prefs.split("BDNadPrefsSpecs[] = {", 1)[1].split("};", 1)[0]
 assert len(re.findall(r'^\s*\{"', specs, re.M)) == 21
 assert "BDNadBlockDisclaimerAcknowledgedVersion" not in specs
 assert re.search(r'BDNadBlockDisclaimerVersion\s*=\s*@"\d{4}-\d{2}-\d{2}-v\d+"', prefs)
+assert re.search(r'BDNadBlockDisclaimerVersion\s*=\s*@"2026-10-18-v3"', prefs)   # 正文换代必须同步升到 v3
 assert re.search(r'BDNadBlockDisclaimerAcknowledgedKey\s*=\s*@"BDNadBlockDisclaimerAcknowledgedVersion"', prefs)
 reader = prefs.split("BDNadPrefsDisclaimerAcknowledged(NSUserDefaults *defaults) {", 1)[1].split("}", 1)[0]
 assert "isKindOfClass:[NSString class]" in reader and "isEqualToString:BDNadBlockDisclaimerVersion" in reader
