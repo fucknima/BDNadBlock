@@ -11,6 +11,9 @@
 // 传输/下载页底部五个新键（一刻相册 / 下载小游戏 / 免流办卡 / 数据包引导 / 加速试用促销）的
 // 默认值、独立保存与快照语义（键位次由固定清单逐位校验，21 key / 21 switch）；
 // 首页横幅容器实验键默认 NO、保存后旧快照不变/新快照可见、与旧键互不影响；
+// 免责声明“已读”元数据（BDNadBlockDisclaimerAcknowledgedVersion）独立于 21 个净化键：
+// 未确认/空/错类型/旧版本读 NO 且不清旧值，只在专用写函数里落当前版本，写后快照完全不变
+// （只是同进程可见性，不是已验重启，也不构成任何法律证据）；
 // 退役键（BDRemoveHomePromo）不在表里：读 fail-closed、写被拒、不进快照，旧值也不被本组件清理。
 //
 // 构建运行（macOS，无需 IPA，无需 Theos）：
@@ -300,6 +303,40 @@ int main(void) {
         CHECK(BDNadPrefsDesired(widgetReopened, @"BDRemoveTransferDataPromo") == NO);
         CHECK(BDNadPrefsDesired(widgetReopened, @"BDRemoveTransferTrialPromo") == NO);
         CHECK(BDNadPrefsDesired(widgetReopened, @"BDExperimentHideHomeBanner") == YES);
+
+        // 免责声明“已读”元数据：独立固定 key，不属于 21 个净化键，也不进快照/待生效判断。
+        // 这里只验证同一进程内 isolated suite 的读写语义（不是跨重启实机验证，更不是法律证据）。
+        CHECK(BDNadPrefsDisclaimerAcknowledged(nil) == NO);    // 没有 defaults：未确认
+        CHECK(BDNadPrefsAcknowledgeDisclaimer(nil) == NO);     // 也不允许写
+        CHECK(BDNadPrefsDisclaimerAcknowledged(d) == NO);      // 空 suite：未确认
+        CHECK(BDNadPrefsSetDesired(d, @"BDNadBlockDisclaimerAcknowledgedVersion", YES) == NO);   // 不是净化键
+        CHECK([d objectForKey:@"BDNadBlockDisclaimerAcknowledgedVersion"] == nil);
+        [d setObject:@[@"x"] forKey:@"BDNadBlockDisclaimerAcknowledgedVersion"];   // 容器：未确认
+        CHECK(BDNadPrefsDisclaimerAcknowledged(d) == NO);
+        [d setObject:@1 forKey:@"BDNadBlockDisclaimerAcknowledgedVersion"];        // 数字：未确认
+        CHECK(BDNadPrefsDisclaimerAcknowledged(d) == NO);
+        [d setObject:@"" forKey:@"BDNadBlockDisclaimerAcknowledgedVersion"];       // 空串：未确认
+        CHECK(BDNadPrefsDisclaimerAcknowledged(d) == NO);
+        [d setObject:@"2020-01-01-v0" forKey:@"BDNadBlockDisclaimerAcknowledgedVersion"];   // 旧版本：未确认
+        CHECK(BDNadPrefsDisclaimerAcknowledged(d) == NO);
+        CHECK([[d stringForKey:@"BDNadBlockDisclaimerAcknowledgedVersion"] isEqualToString:@"2020-01-01-v0"]);
+        CHECK(BDNadPrefsSpecForKey(@"BDNadBlockDisclaimerAcknowledgedVersion") == NULL);
+        NSDictionary<NSString *, NSNumber *> *metaBefore = BDNadPrefsSnapshot(d);
+        CHECK(metaBefore.count == 21 && metaBefore.count == BDNadPrefsSpecCount);   // 元数据没混进规格
+        CHECK(metaBefore[@"BDNadBlockDisclaimerAcknowledgedVersion"] == nil);
+        CHECK(BDNadPrefsAcknowledgeDisclaimer(d) == YES);      // 首次提示确认按钮才走这里
+        CHECK(BDNadPrefsDisclaimerAcknowledged(d) == YES);
+        CHECK([[d stringForKey:@"BDNadBlockDisclaimerAcknowledgedVersion"] isEqualToString:BDNadBlockDisclaimerVersion]);
+        NSUserDefaults *metaReopened = [[NSUserDefaults alloc] initWithSuiteName:suiteName];
+        CHECK(BDNadPrefsDisclaimerAcknowledged(metaReopened) == YES);   // 同进程可见性（不是已验重启）
+        CHECK([BDNadPrefsSnapshot(d) isEqual:metaBefore]);     // 快照完全不变：元数据不参与净化快照
+        NSDictionary<NSString *, NSNumber *> *metaAfter = BDNadPrefsSnapshot(d);
+        CHECK(metaAfter[@"BDNadBlockEnabled"].boolValue == YES);            // 原净化值/默认不受影响
+        CHECK(metaAfter[@"BDRemoveRenewButton"].boolValue == NO);
+        CHECK(metaAfter[@"BDExperimentHideHomeBanner"].boolValue == YES);   // 顶部实验的用户 saved YES 仍在
+        CHECK(BDNadPrefsDesired(d, @"BDRemoveHomePromo") == NO);            // 退役键语义不变
+        CHECK([d boolForKey:@"BDRemoveHomePromo"] == YES);
+        CHECK(BDNadPrefsDesired(d, @"BDNadUnknownKey") == NO);              // 未知键仍 fail-closed
 
         // 清理：只删本次测试 owned 的 suite，不碰真实域。
         [d removePersistentDomainForName:suiteName];
