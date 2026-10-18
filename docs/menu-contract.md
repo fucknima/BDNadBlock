@@ -1,6 +1,6 @@
 # 净化设置菜单接线契约（Preferences.h + SettingsMenu.h + MenuEntry.h）
 
-本组件的最小说明。**菜单只读写 NSUserDefaults，冷启动生效**：
+本组件的最小说明。**净化开关只读写 NSUserDefaults，冷启动生效**：
 只写本组件固定键（不修改账号、缓存或原生偏好），不热改 UIKit 列表/导航、
 不自动杀 App、不清百度网盘任何数据。功能全貌见 [README.md](../README.md)。
 
@@ -142,9 +142,13 @@ static inline void BDPresentPurificationSettings(UIViewController *host, NSURL *
   `UINavigationController` + 右上“完成”。
 - 同一菜单已在导航栈里 -> `popToViewController` 回到它，不堆叠。
 - 分享行点击时若本菜单自己已有 `presentedViewController`（分享/提示面板）-> 直接返回，不叠第二个面板。
-- 最后一组“关于”位于诊断组之后，固定两行：免责声明、Telegram交流群；它不是偏好分组，不新增key或开关，原21项与诊断分享行索引不变。
-  免责声明点击展示系统alert，内容说明非官方、兼容/数据风险、备份和合规使用，不要求同意也不写入状态。
-  群组链接唯一来源为 `https://t.me/fuckAd1024`，只在点击后通过系统 `openURL:options:completionHandler:` 打开；失败时仅在菜单仍可见且无模态时提示，不自动重试、不主动联网探测。
+- 最后一组“关于”位于诊断组之后，固定两行：免责声明、Telegram交流群；它不是开关分组，原21项与诊断分享行索引不变。
+  首次进入设置页，在 `viewDidAppear:` 且视图活跃、无模态时提示；只有点击“我已阅读并知悉”才保存本版阅读记录，未确认不写。手动从“关于”查看相同正文不改记录。
+  阅读版本用固定元数据键 `BDNadBlockDisclaimerAcknowledgedVersion`，不进入21项规格表/开关tag/启动快照/待冷启动改动判断；缺值、旧版本或错误类型视为未确认，保存不清理其它键。
+  正文说明非官方、必要授权、账号/数据/兼容风险、备份与合规使用、责任依法认定；确认不等于放弃法定权利或获得平台授权，也不会卸载或停用已有hook。
+  免责声明不能保证免责。法律边界参考[司法局对《民法典》496/497/506条的说明](http://www.kmwh.gov.cn/c/2021-10-29/5500052.shtml)，实际效力依适用法律与事实，正式分发需律师审核。
+  群组链接唯一来源为 `https://t.me/fuckAd1024`，只在点击后通过系统 `openURL:options:completionHandler:` 打开；本次请求的临时观察者只记录当前场景是否离开前台，完成时先移除。
+  已离开前台/成功/菜单不可见/已有模态均不补错误框；仅始终前台且系统回报失败时提示并提供手动复制。不把失活事件当作群已加载的证明，不自动重试或访问链接探测。
 - 只在主线程、由 UIKit 按钮触发时调用（内部 `[NSThread isMainThread]` 保护）。
 - `logURL` 传现有日志文件 `Documents/BDNadBlock-dump.txt` 的 URL；
   文件不存在/不可读 -> `UIAlertController` 明确提示；可读 -> `UIActivityViewController`
@@ -168,7 +172,7 @@ present 之前还有主线程/modal 守卫，守卫拒绝时菜单不会出现�
 ## 5. 不做的事（设计要求，别在接线时加回来）
 
 - 不写 `BHSettings` 原生开关、不删 unknown 键、不修改账号/缓存/原生偏好。
-  唯一写入面就是 App 的 `NSUserDefaults` 里本组件规格表内的固定键。
+  写入面仅为App的 `NSUserDefaults` 中21个规格表开关键，以及独立的免责声明阅读版本元数据；后者只在用户明确确认时写入。
 - 不 `synchronize`、不直接改 plist 文件、不新增配置服务类/依赖。
 - 不热更新（改完不 reload 网盘的列表/导航）、不自动杀 App、不加延时/锁/重试。
 - 不新增日志系统、不复制整份日志、不自动上传（分享目的地由用户自己选）、不收集账号信息。

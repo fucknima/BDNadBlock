@@ -116,6 +116,29 @@ static inline BOOL BDNadPrefsSetDesired(NSUserDefaults *defaults, NSString *key,
     return YES;
 }
 
+#pragma mark - 免责声明“已读”元数据（独立固定 key，不是第 22 个开关）
+
+// 首次进入设置页的免责声明确认记录：key 与版本常量都固定在本文件，属于本组件自己的元数据，
+// 不进 BDNadPrefsSpecs / 快照 / HasPendingChanges；BDNadPrefsSetDesired 仍按未知键拒绝它，
+// 只有下面的专用写函数允许保存这一固定元数据。
+// 正文有实质改动时把 BDNadBlockDisclaimerVersion 升成新日期版本即可再次提示；旧版本视为未确认。
+static NSString *const BDNadBlockDisclaimerAcknowledgedKey = @"BDNadBlockDisclaimerAcknowledgedVersion";
+static NSString *const BDNadBlockDisclaimerVersion = @"2026-10-18-v2";
+
+// 只认“当前版本的非空 NSString”，其余（nil/空串/旧版本/NSNumber/数组字典等容器）一律视为未确认。
+static inline BOOL BDNadPrefsDisclaimerAcknowledged(NSUserDefaults *defaults) {
+    id v = defaults ? [defaults objectForKey:BDNadBlockDisclaimerAcknowledgedKey] : nil;
+    return [v isKindOfClass:[NSString class]] && [v isEqualToString:BDNadBlockDisclaimerVersion];
+}
+
+// 只给首次提示的确认按钮用：defaults 为 nil 时拒绝；只写上面这一个固定 key，
+// 不 synchronize、不写时间/账号/标识、不删任何别的键。
+static inline BOOL BDNadPrefsAcknowledgeDisclaimer(NSUserDefaults *defaults) {
+    if (!defaults) return NO;
+    [defaults setObject:BDNadBlockDisclaimerVersion forKey:BDNadBlockDisclaimerAcknowledgedKey];
+    return YES;
+}
+
 #pragma mark - 启动快照
 
 // 纯函数：按规格表顺序读一遍，返回 immutable 快照。测试里可多次调用以模拟“下一次冷启动”的读取。

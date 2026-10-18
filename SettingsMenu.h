@@ -2,7 +2,8 @@
 //
 // 只有一个类 BDNadBlockSettingsViewController（UITableViewStyleInsetGrouped），
 // 分组/标题/默认值全部来自 Preferences.h 的规格表 —— 这里不再抄一份默认值。
-// 唯一例外是最后的「关于」组：纯展示（免责声明 + 群链接），没有 key、不读写 NSUserDefaults。
+// 「关于」组是纯展示（免责声明 + 群链接），没有开关 key；另外首次进入本页会弹一次免责声明，
+// 其“已读”记录走 Preferences.h 的独立元数据 key：不占 21 个净化键、不进快照/待生效判断。
 // 开关只写规格表里的 owned key；写的是 NSUserDefaults，冷启动才生效。
 //
 // 入口：BDPresentPurificationSettings(host, logURL)
@@ -43,6 +44,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (const BDNadPrefsSpec * _Nullable)bdSpecAtRow:(NSInteger)row inGroup:(BDNadPrefsGroup)group;
 - (UITableViewCell *)bdAboutCellForRow:(NSInteger)row;
 - (void)bdShowDisclaimer;
+- (void)bdPresentDisclaimerFirstUse:(BOOL)firstUse;
 - (void)bdOpenGroupLink;
 @end
 
@@ -51,11 +53,24 @@ NS_ASSUME_NONNULL_BEGIN
 // 群链接唯一来源：副标题与外链都引用这一份，不要在别处再抄一遍。
 static NSString *const BDNadAboutGroupURLString = @"https://t.me/fuckAd1024";
 
-// 免责声明的固定文案（只展示，不落盘、不要求同意）。
+// 免责声明的固定文案：「关于」条目与首次进入提示共用同一份，不要在别处再抄一遍。
+// 只展示/知悉，不构成授权，也不是电子签名；有实质改动时同步升级 Preferences.h 的版本常量。
 static NSString *const BDNadAboutDisclaimerText =
-    @"本工具为非官方第三方插件，与百度无关联，仅供个人学习与技术研究。\n\n"
-    @"不保证所有版本或设备兼容，使用可能造成界面异常、功能失效或数据风险，请事先备份重要数据。\n\n"
-    @"请在法律允许且已获授权的范围内使用，遵守相关服务条款并自行评估风险；本声明不排除依法不可免除的责任。";
+    @"1. 非官方说明：本工具为非官方第三方界面净化插件，不代表百度及其关联方，也不表示获得其认可或授权；相关名称、商标与资源的权利归原权利人。\n\n"
+    @"2. 使用边界：请在您有权控制且已获必要授权的设备、账号与软件环境中合法使用。不得用于绕过访问控制、破解付费权益、侵犯知识产权或其他违法活动；“学习研究”不构成免责或授权。\n\n"
+    @"3. 风险提示：本工具按现状提供，不保证持续维护、全部版本兼容、无故障或不触发平台限制；可能出现界面异常、功能失效、数据损失或账号使用风险，请提前备份重要数据并自行评估，不接受风险请停止使用并卸载插件。\n\n"
+    @"4. 责任边界：您应对自身使用、修改和传播行为承担依法应负的责任，相关各方责任依适用法律及实际行为认定。本声明不排除或限制人身损害、故意或重大过失等依法不可免除的责任，不表示开发者可免除全部责任。\n\n"
+    @"5. 阅读确认：确认仅记录您已阅读本版提示，不代表您放弃法定权利，也不证明使用行为已获平台授权；正式分发或商业使用前应咨询执业律师。";
+
+// 视图已上屏且所在场景/应用在前台活跃：有 windowScene 时必须以自己那个场景为准
+// （scene 化的 applicationState 不能代替当前窗口所在场景），无 scene 的老系统才退回 app state。
+static inline BOOL BDNadMenuActiveAndVisible(UIView * _Nullable view) {
+    UIWindow *window = view.window;
+    if (!window) return NO;
+    UIScene *scene = window.windowScene;
+    if (scene) return scene.activationState == UISceneActivationStateForegroundActive;
+    return UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
+}
 
 // 关于组的固定坐标：最后一组；两行只展示，原 21 个开关的 tag 与诊断分享行索引都不受影响。
 enum {
@@ -248,34 +263,82 @@ enum {
     [self presentViewController:share animated:YES completion:nil];
 }
 
-- (void)bdShowDisclaimer {
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    // 首次进入本页才提示：这里只读元数据，不落确认；只有弹窗按钮的 handler 才写。
+    if (BDNadPrefsDisclaimerAcknowledged([NSUserDefaults standardUserDefaults])) return;
+    [self bdPresentDisclaimerFirstUse:YES];
+}
+
+// 首次提示与「关于 > 免责声明」共用同一正文和同一个 present 方法，不要抄两份正文。
+- (void)bdPresentDisclaimerFirstUse:(BOOL)firstUse {
     if (self.presentedViewController) return;   // 已有面板：不叠第二个
+    if (!BDNadMenuActiveAndVisible(self.viewIfLoaded)) return;   // 未上屏/不在前台：不弹
     UIAlertController *alert =
-        [UIAlertController alertControllerWithTitle:@"免责声明"
+        [UIAlertController alertControllerWithTitle:(firstUse ? @"免责声明与使用须知" : @"免责声明")
                                            message:BDNadAboutDisclaimerText
                                     preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+    if (firstUse) {
+        // 唯一肯定按钮；未点它（离开/杀进程）就不算已读，下次进入会再次提示。
+        [alert addAction:[UIAlertAction actionWithTitle:@"我已阅读并知悉"
+                                                  style:UIAlertActionStyleDefault
+                                                handler:^(UIAlertAction *action) {
+            (void)action;
+            BDNadPrefsAcknowledgeDisclaimer([NSUserDefaults standardUserDefaults]);
+        }]];
+    } else {
+        // 手动查看：关闭不改首次“已读”元数据，也不强加同意。
+        [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+    }
     [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)bdShowDisclaimer {
+    [self bdPresentDisclaimerFirstUse:NO];
 }
 
 - (void)bdOpenGroupLink {
     if (self.presentedViewController) return;   // 已有面板：不叠第二个
     NSURL *url = [NSURL URLWithString:BDNadAboutGroupURLString];   // 固定常量，正常不会失效
     if (!url) return;
+    if (!BDNadMenuActiveAndVisible(self.viewIfLoaded)) return;   // 视图不在窗口/不在前台：不发起
+
+    // 本次打开临时观察“离开前台”这一个事件：有 scene 只看自己那个场景，无 scene 的老系统
+    // 才退回 UIApplication 的通知；block 只置一个 __block BOOL，不捕获 VC，也不常驻观察。
+    UIScene *scene = self.viewIfLoaded.window.windowScene;
+    __block BOOL leftForeground = NO;
+    id observer = [NSNotificationCenter.defaultCenter
+        addObserverForName:(scene ? UISceneWillDeactivateNotification : UIApplicationWillResignActiveNotification)
+                    object:(scene ? (id)scene : nil)
+                     queue:nil
+                usingBlock:^(NSNotification *note) {
+        (void)note;
+        leftForeground = YES;
+    }];
+
     __weak BDNadBlockSettingsViewController *weakSelf = self;   // 系统回调不延长本 VC 生命周期
     [UIApplication.sharedApplication openURL:url
                                      options:@{}
                            completionHandler:^(BOOL success) {
-        if (success) return;   // 已交给系统选择浏览器/Telegram：不弹框
-        // 文档：该 block 在主线程异步回调。失败只提示，不重试、不换 scheme、不预先探测。
+        [NSNotificationCenter.defaultCenter removeObserver:observer];   // 每次打开一枚临时 observer：先撤掉
+        // 已交给系统浏览器的这次请求，哪怕回到前台才收到 false，也不补“无法打开”框；
+        // leftForeground 只表示期间离开过前台，不表示链接或群加载成功。
+        if (success || leftForeground) return;
+        // 文档：该 block 在主线程异步回调。只有从头到尾都在前台、仍是当前可见菜单且真的 false 才提示。
         BDNadBlockSettingsViewController *vc = weakSelf;
         if (!vc || vc.presentedViewController) return;   // 已离开或已有面板：不越级 present
-        if (!vc.viewIfLoaded.window) return;             // 视图不在窗口：不弹
+        if (!BDNadMenuActiveAndVisible(vc.viewIfLoaded)) return;
         UIAlertController *alert =
             [UIAlertController alertControllerWithTitle:@"无法打开群组链接"
                                                message:BDNadAboutGroupURLString
                                         preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"复制链接"
+                                                  style:UIAlertActionStyleDefault
+                                                handler:^(UIAlertAction *action) {
+            (void)action;
+            UIPasteboard.generalPasteboard.string = BDNadAboutGroupURLString;   // 只有点这个按钮才写剪贴板
+        }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
         [vc presentViewController:alert animated:YES completion:nil];
     }];
 }
